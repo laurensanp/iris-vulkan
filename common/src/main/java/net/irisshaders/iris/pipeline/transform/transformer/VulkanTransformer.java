@@ -103,6 +103,12 @@ public class VulkanTransformer {
 				root.rename("gl_VertexID", "gl_VertexIndex");
 				root.rename("gl_InstanceID", "gl_InstanceIndex");
 
+				if ((parameters.patch == Patch.VANILLA || parameters.patch == Patch.SODIUM)
+					&& declaresSampler(root, "tex") && !root.identifierIndex.has("gtexture")) {
+					// "tex" is the albedo sampler too (Complementary); GL Iris binds it under that name.
+					root.rename("tex", "gtexture");
+				}
+
 				if (parameters.patch == Patch.VANILLA) {
 					renameBindings(root, VANILLA_BINDINGS);
 				} else if (parameters.patch == Patch.SODIUM) {
@@ -110,6 +116,20 @@ public class VulkanTransformer {
 				}
 			});
 		}
+	}
+
+	/** Whether a uniform sampler (or other opaque uniform) with this name is declared at the top level. */
+	private static boolean declaresSampler(Root root, String name) {
+		for (DeclarationExternalDeclaration external : root.nodeIndex.get(DeclarationExternalDeclaration.class)) {
+			if (external.getDeclaration() instanceof TypeAndInitDeclaration declaration
+				&& isUniform(declaration.getType().getTypeQualifier())
+				&& !(declaration.getType().getTypeSpecifier() instanceof BuiltinNumericTypeSpecifier)
+				&& declaration.getMembers().stream().anyMatch(member -> member.getName().getName().equals(name))) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/** Gives Iris' names the binding names, first moving aside pack identifiers that already use them (e.g. Solas' Fog()). */

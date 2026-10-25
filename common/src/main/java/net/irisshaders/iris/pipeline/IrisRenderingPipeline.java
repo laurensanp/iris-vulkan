@@ -93,6 +93,7 @@ import net.irisshaders.iris.targets.ClearPassCreator;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.targets.backed.NativeImageBackedSingleColorTexture;
 import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanUnits;
 import net.irisshaders.iris.vulkan.VulkanGbuffers;
 import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
@@ -932,6 +933,11 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		Vector4f emptyClearColor = new Vector4f(1.0F);
 
 		GLDebug.pushGroup(100, "Clear textures");
+
+		if (IrisVulkan.isActive()) {
+			// Created (and cleared) here, outside any render pass: unbound samplers read it.
+			VulkanUnits.fallbackTexture();
+		}
 
 		clearImages.forEach(ImageClearPass::execute);
 

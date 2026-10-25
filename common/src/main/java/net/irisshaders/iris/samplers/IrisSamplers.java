@@ -1,5 +1,6 @@
 package net.irisshaders.iris.samplers;
 
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -256,6 +257,11 @@ public class IrisSamplers {
 	}
 
 	public static GlSampler getTerrainCacheIris(int i) {
+		if (IrisVulkan.isActive()) {
+			// The cache's samplers are RenderPearl Vulkan samplers without a GL id; same filtering, no anisotropy.
+			return GlSampler.MIPPED_NEAREST;
+		}
+
 		if (WorldRenderingSettings.INSTANCE.breaksAnisotropy()) i = 1;
 		if (terrainS[i] == null) {
 			terrainS[i] = new GlSampler(((com.mojang.renderpearl.backend.opengl.GlSampler) getTerrainCache(i)).getId());
