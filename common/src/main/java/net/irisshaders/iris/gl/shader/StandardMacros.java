@@ -43,14 +43,24 @@ public class StandardMacros {
 		defines.add(new StringPair(key, value));
 	}
 
+	/** The GL extensions packs test for that the Vulkan path (SPIR-V) provides. */
+	private static final Set<String> VULKAN_GL_EXTENSIONS = Set.of("MC_GL_ARB_shader_image_load_store",
+		"MC_GL_ARB_compute_shader", "MC_GL_ARB_shader_storage_buffer_object", "MC_GL_ARB_gpu_shader5",
+		"MC_GL_ARB_texture_gather", "MC_GL_ARB_shader_texture_lod", "MC_GL_EXT_gpu_shader4",
+		"MC_GL_ARB_shading_language_packing", "MC_GL_ARB_explicit_attrib_location", "MC_GL_ARB_conservative_depth",
+		"MC_GL_ARB_shader_atomic_counters", "MC_GL_ARB_texture_query_levels", "MC_GL_ARB_derivative_control",
+		"MC_GL_ARB_shader_bit_encoding", "MC_GL_ARB_texture_rectangle", "MC_GL_ARB_clip_control");
+
 	public static ImmutableList<StringPair> createStandardEnvironmentDefines() {
 		ArrayList<StringPair> standardDefines = new ArrayList<>();
 
 		define(standardDefines, "MC_VERSION", getMcVersion());
 		define(standardDefines, "MC_MIPMAP_LEVEL", String.valueOf(Minecraft.getInstance().options.mipmapLevels().get()));
 		define(standardDefines, "IRIS_VERSION", getFormattedIrisVersion());
-		define(standardDefines, "MC_GL_VERSION", getGlVersion(GL20C.GL_VERSION));
-		define(standardDefines, "MC_GLSL_VERSION", getGlVersion(GL20C.GL_SHADING_LANGUAGE_VERSION));
+		boolean vulkan = net.irisshaders.iris.mixin.IrisMixinPlugin.usingVulkan;
+		// Vulkan: no OpenGL context to ask; SPIR-V covers what GL 4.6 / GLSL 4.60 offer.
+		define(standardDefines, "MC_GL_VERSION", vulkan ? "460" : getGlVersion(GL20C.GL_VERSION));
+		define(standardDefines, "MC_GLSL_VERSION", vulkan ? "460" : getGlVersion(GL20C.GL_SHADING_LANGUAGE_VERSION));
 		define(standardDefines, getOsString());
 		define(standardDefines, getVendor());
 		define(standardDefines, getRenderer());
@@ -96,7 +106,7 @@ public class StandardMacros {
 		define(standardDefines, "DH_BLOCK_AIR", String.valueOf(14));
 		define(standardDefines, "DH_BLOCK_ILLUMINATED", String.valueOf(15));
 
-		for (String glExtension : getGlExtensions()) {
+		for (String glExtension : vulkan ? VULKAN_GL_EXTENSIONS : getGlExtensions()) {
 			define(standardDefines, glExtension);
 		}
 

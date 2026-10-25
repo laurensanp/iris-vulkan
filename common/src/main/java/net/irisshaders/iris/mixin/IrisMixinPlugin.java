@@ -56,6 +56,11 @@ public class IrisMixinPlugin implements IMixinConfigPlugin {
                 usingVulkan = false;
             }
         }
+        // Iris DLSS Bridge always runs the game on the Vulkan backend.
+        usingVulkan |= IrisPlatformHelpers.getInstance().isModLoaded("iris-dlss");
+        if (usingVulkan) {
+            net.irisshaders.iris.gl.IrisLimits.VK_CONFORMANCE = true;
+        }
     }
 	@Override
 	public void onLoad(String mixinPackage) {

@@ -44,6 +44,10 @@ import java.nio.IntBuffer;
  */
 public class IrisRenderSystem {
 	private static final int[] emptyArray = new int[SamplerLimits.get().getMaxTextureUnits()];
+	/** Vulkan mode: no OpenGL context; capabilities are those of the Vulkan path (any RTX / Vulkan 1.2 GPU). */
+	private static boolean vulkan() {
+		return net.irisshaders.iris.mixin.IrisMixinPlugin.usingVulkan;
+	}
 	private static GpuBufferSlice backupProjection;
 	private static ProjectionMatrixBuffer perspectiveProjectionMatrixBuffer;
 	private static ProjectionType backupProjectionType;
@@ -297,11 +301,11 @@ public class IrisRenderSystem {
 	}
 
 	public static boolean supportsSSBO() {
-		return GL.getCapabilities().OpenGL44 || (GL.getCapabilities().GL_ARB_shader_storage_buffer_object && GL.getCapabilities().GL_ARB_buffer_storage);
+		return vulkan() || GL.getCapabilities().OpenGL44 || (GL.getCapabilities().GL_ARB_shader_storage_buffer_object && GL.getCapabilities().GL_ARB_buffer_storage);
 	}
 
 	public static boolean supportsImageLoadStore() {
-		return GL.getCapabilities().glBindImageTexture != 0L || GL.getCapabilities().OpenGL42 || ((GL.getCapabilities().GL_ARB_shader_image_load_store || GL.getCapabilities().GL_EXT_shader_image_load_store) && GL.getCapabilities().GL_ARB_buffer_storage);
+		return vulkan() || GL.getCapabilities().glBindImageTexture != 0L || GL.getCapabilities().OpenGL42 || ((GL.getCapabilities().GL_ARB_shader_image_load_store || GL.getCapabilities().GL_EXT_shader_image_load_store) && GL.getCapabilities().GL_ARB_buffer_storage);
 	}
 
 	public static void genBuffers(int[] buffers) {
@@ -333,7 +337,7 @@ public class IrisRenderSystem {
 	}
 
 	public static boolean supportsBufferBlending() {
-		return GL.getCapabilities().GL_ARB_draw_buffers_blend || GL.getCapabilities().OpenGL40;
+		return vulkan() || GL.getCapabilities().GL_ARB_draw_buffers_blend || GL.getCapabilities().OpenGL40;
 	}
 
 	public static void disableBlend() {
@@ -422,11 +426,11 @@ public class IrisRenderSystem {
 	}
 
 	public static boolean supportsCompute() {
-		return supportsCompute;
+		return vulkan() || supportsCompute;
 	}
 
 	public static boolean supportsTesselation() {
-		return supportsTesselation;
+		return vulkan() || supportsTesselation;
 	}
 
 	public static int genSampler() {

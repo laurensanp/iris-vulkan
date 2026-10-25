@@ -370,6 +370,35 @@ public class Iris {
 		return true;
 	}
 
+	/**
+	 * Vulkan mode: config only (the OpenGL renderer is not started), read before options load.
+	 */
+	public static void initVulkanConfig() {
+		if (irisConfig != null) {
+			return;
+		}
+		IRIS_VERSION = IrisPlatformHelpers.getInstance().getVersion();
+		irisConfig = new IrisConfig(IrisPlatformHelpers.getInstance().getConfigDir().resolve("iris.properties"), IrisPlatformHelpers.getInstance().getConfigDir().resolve("iris-excluded.json"));
+		try {
+			irisConfig.initialize();
+		} catch (IOException e) {
+			logger.error("Failed to initialize Iris configuration, default values will be used instead", e);
+		}
+	}
+
+	/** Vulkan mode: parses the configured shader pack (no programs are created). */
+	public static ShaderPack loadShaderPackForVulkan() {
+		initVulkanConfig();
+		if (!irisConfig.areShadersEnabled()) {
+			return null;
+		}
+		Optional<String> name = irisConfig.getShaderPackName();
+		if (name.isEmpty() || !loadExternalShaderpack(name.get())) {
+			return null;
+		}
+		return currentPack;
+	}
+
 	private static void handleException(Exception e) {
 		if (irisConfig.areDebugOptionsEnabled()) {
 			Minecraft.getInstance().gui.setScreen(new DebugLoadFailedGridScreen(Minecraft.getInstance().gui.screen(), Component.literal(e instanceof ShaderCompileException ? "Failed to compile shaders" : "Exception"), e));

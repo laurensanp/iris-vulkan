@@ -11,5 +11,6 @@ public class IrisLimits {
 	public static final int MAX_COLOR_BUFFERS = 32;
 
 
-	public static final boolean VK_CONFORMANCE = false;
+	/** Explicit in/out locations between stages (needed for SPIR-V); on in Vulkan mode. */
+	public static boolean VK_CONFORMANCE = false;
 }

@@ -12,6 +12,13 @@ public class SamplerLimits {
 	private final int maxShaderStorageUnits;
 
 	private SamplerLimits() {
+		if (net.irisshaders.iris.mixin.IrisMixinPlugin.usingVulkan) {
+			// Vulkan path: what an OpenGL 4.6 driver on the same GPU reports.
+			this.maxTextureUnits = 32;
+			this.maxDrawBuffers = 8;
+			this.maxShaderStorageUnits = 16;
+			return;
+		}
 		this.maxTextureUnits = GlStateManager._getInteger(GL20C.GL_MAX_TEXTURE_IMAGE_UNITS);
 		this.maxDrawBuffers = GlStateManager._getInteger(GL20C.GL_MAX_DRAW_BUFFERS);
 		this.maxShaderStorageUnits = IrisRenderSystem.supportsSSBO() ? GlStateManager._getInteger(GL45C.GL_MAX_SHADER_STORAGE_BUFFER_BINDINGS) : 0;
