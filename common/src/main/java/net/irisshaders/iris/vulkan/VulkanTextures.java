@@ -2,13 +2,18 @@ package net.irisshaders.iris.vulkan;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.jetbrains.annotations.Nullable;
 
+import org.joml.Vector4f;
+
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Iris passes textures around as GL names (ints, often behind an IntSupplier). On Vulkan those ints
@@ -18,6 +23,8 @@ import java.util.Map;
 public final class VulkanTextures {
 	private static final Int2ObjectOpenHashMap<Entry> BY_ID = new Int2ObjectOpenHashMap<>();
 	private static final Map<GpuTexture, Integer> BY_TEXTURE = new IdentityHashMap<>();
+	/** Textures standing in for a GL format without alpha (RGB16F as RGBA16F, ...): alpha stays 1, see {@link #keepOpaqueAlpha}. */
+	private static final Set<GpuTexture> OPAQUE_ALPHA = Collections.newSetFromMap(new IdentityHashMap<>());
 	private static final int SWEEP_INTERVAL = 256;
 	private static int nextId = 1;
 	private static int registrationsSinceSweep;
@@ -30,6 +37,29 @@ public final class VulkanTextures {
 		RenderSystem.assertOnRenderThread();
 		GpuTexture texture = RenderSystem.getDevice().createTexture(label, usage, format, width, height, 1, mipLevels);
 		return register(texture, true);
+	}
+
+	/**
+	 * GL formats without alpha (RGB16F, RGB8, ...) have an RGBA texture on Vulkan, but GL reads their alpha as 1
+	 * and packs rely on it (Solas drops water reflections where gaux1.a is 0). Such a texture starts with alpha 1
+	 * in every mip level, and passes don't write its alpha ({@link #writeMask}), so it reads like on GL.
+	 */
+	public static void keepOpaqueAlpha(int id) {
+		GpuTexture texture = texture(id);
+
+		if (texture != null) {
+			OPAQUE_ALPHA.add(texture);
+			RenderSystem.getDevice().createCommandEncoder().clearColorTexture(texture, new Vector4f(0.0f, 0.0f, 0.0f, 1.0f));
+		}
+	}
+
+	public static boolean hasOpaqueAlpha(GpuTexture texture) {
+		return OPAQUE_ALPHA.contains(texture);
+	}
+
+	/** The write mask to render into {@code texture} with: without alpha for {@link #keepOpaqueAlpha} textures. */
+	public static int writeMask(GpuTexture texture, int writeMask) {
+		return OPAQUE_ALPHA.contains(texture) ? writeMask & ~ColorTargetState.WRITE_ALPHA : writeMask;
 	}
 
 	/** The id of a texture someone else owns (the game, Sodium); stable for the texture's lifetime. */
@@ -47,6 +77,7 @@ public final class VulkanTextures {
 		}
 
 		BY_TEXTURE.remove(old.texture);
+		OPAQUE_ALPHA.remove(old.texture);
 		old.close();
 
 		GpuTexture texture = RenderSystem.getDevice().createTexture(label, usage, format, width, height, 1, mipLevels);
@@ -59,6 +90,7 @@ public final class VulkanTextures {
 
 		if (entry != null) {
 			BY_TEXTURE.remove(entry.texture);
+			OPAQUE_ALPHA.remove(entry.texture);
 			entry.close();
 		}
 	}

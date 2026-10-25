@@ -68,7 +68,7 @@ public final class VulkanGbuffers {
 	}
 
 	/** The colortex buffers and views a redirected render pass writes. */
-	public record Target(int[] buffers, List<GpuFormat> formats, boolean beforeTranslucent) {
+	public record Target(int[] buffers, List<GpuFormat> formats, List<Boolean> opaqueAlpha, boolean beforeTranslucent) {
 	}
 
 	/** {@code owned}: compiled here (pack programs), not by the game's pipeline cache, so closed here. */
@@ -76,7 +76,7 @@ public final class VulkanGbuffers {
 	}
 
 	private record VariantKey(RenderPipeline source, List<VertexFormat> vertexFormats, List<GpuFormat> formats,
-							  @Nullable GlProgram program) {
+							  List<Boolean> opaqueAlpha, @Nullable GlProgram program) {
 	}
 
 	/** Called for every lookup in RenderSystem's pipeline cache, so a compiled pipeline can be rebuilt later. */
@@ -117,8 +117,10 @@ public final class VulkanGbuffers {
 
 		RenderPassDescriptor.Builder builder = RenderPassDescriptor.builder(descriptor.label());
 		List<GpuFormat> formats = new ArrayList<>(views.size());
+		List<Boolean> opaqueAlpha = new ArrayList<>(views.size());
 
 		for (GpuTextureView view : views) {
+			opaqueAlpha.add(VulkanTextures.hasOpaqueAlpha(view.texture()));
 			// Iris clears its own buffers (ClearPass); vanilla's clear of the main target stays out of them.
 			builder.withColorAttachment(view, Optional.empty());
 			formats.add(view.texture().getFormat());
@@ -131,7 +133,7 @@ public final class VulkanGbuffers {
 		}
 
 		builder.withRenderArea(descriptor.renderArea());
-		pending = new Target(buffers, List.copyOf(formats), pipeline.isBeforeTranslucent);
+		pending = new Target(buffers, List.copyOf(formats), List.copyOf(opaqueAlpha), pipeline.isBeforeTranslucent);
 		return builder.build();
 	}
 
@@ -170,7 +172,7 @@ public final class VulkanGbuffers {
 		boolean skip = ImmediateState.skipExtension.get();
 		// Unused vertex buffer slots are null.
 		List<VertexFormat> vertexFormats = Collections.unmodifiableList(new ArrayList<>(source.getVertexFormatBindings()));
-		VariantKey key = new VariantKey(source, vertexFormats, target.formats(), shader);
+		VariantKey key = new VariantKey(source, vertexFormats, target.formats(), target.opaqueAlpha(), shader);
 		CompiledRenderPipeline variant = VARIANT_CACHE.get(key);
 
 		if (variant == null) {
@@ -263,7 +265,7 @@ public final class VulkanGbuffers {
 				}
 			}
 
-			colorTargets.add(new ColorTargetState(bufferBlend, format, writeMask));
+			colorTargets.add(new ColorTargetState(bufferBlend, format, alphaMask(target, i, writeMask)));
 		}
 
 		return program.compileGbuffer(source, vertexFormats, colorTargets, outputLocations);
@@ -279,7 +281,7 @@ public final class VulkanGbuffers {
 			GpuFormat format = target.formats().get(i);
 
 			if (i == colortex0 && original != null) {
-				colorTargets.add(new ColorTargetState(original.blendFunction(), format, original.writeMask()));
+				colorTargets.add(new ColorTargetState(original.blendFunction(), format, alphaMask(target, i, original.writeMask())));
 			} else {
 				colorTargets.add(new ColorTargetState(Optional.empty(), format, ColorTargetState.WRITE_NONE));
 			}
@@ -298,6 +300,11 @@ public final class VulkanGbuffers {
 		}
 
 		return compiled;
+	}
+
+	/** No alpha writes into buffers whose GL format has no alpha (see VulkanTextures.keepOpaqueAlpha). */
+	private static int alphaMask(Target target, int attachment, int writeMask) {
+		return target.opaqueAlpha().get(attachment) ? writeMask & ~ColorTargetState.WRITE_ALPHA : writeMask;
 	}
 
 	private static int indexOf(int[] array, int value) {

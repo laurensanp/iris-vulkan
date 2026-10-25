@@ -55,6 +55,7 @@ public class RenderTarget {
 			// Filtering and wrapping live in Iris' samplers (GlSampler), not in the texture.
 			this.mainTexture = VulkanTextures.create(label(false), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
 			this.altTexture = VulkanTextures.create(label(true), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			keepVulkanAlpha();
 			return;
 		}
 
@@ -104,6 +105,7 @@ public class RenderTarget {
 		if (IrisVulkan.isActive()) {
 			VulkanTextures.replace(mainTexture, label(false), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
 			VulkanTextures.replace(altTexture, label(true), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			keepVulkanAlpha();
 			return;
 		}
 
@@ -153,6 +155,13 @@ public class RenderTarget {
 	/** Full mip chain on Vulkan (filled on demand by generateMipmaps); integer formats can't be filtered down. */
 	private int vulkanMipLevels(int width, int height) {
 		return allowsLinear ? 32 - Integer.numberOfLeadingZeros(Math.max(width, height)) : 1;
+	}
+
+	private void keepVulkanAlpha() {
+		if (VulkanFormats.addsAlpha(internalFormat)) {
+			VulkanTextures.keepOpaqueAlpha(mainTexture);
+			VulkanTextures.keepOpaqueAlpha(altTexture);
+		}
 	}
 
 	private String label(boolean alt) {

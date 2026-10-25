@@ -12,6 +12,11 @@ public final class VulkanFormats {
 	private VulkanFormats() {
 	}
 
+	/** Whether {@link #toRenderTarget} adds an alpha channel the GL format doesn't have (GL reads it as 1). */
+	public static boolean addsAlpha(InternalTextureFormat format) {
+		return toRenderTarget(format).componentCount() == 4 && !format.name().contains("A");
+	}
+
 	public static GpuFormat toRenderTarget(InternalTextureFormat format) {
 		return switch (format) {
 			case RGBA, RGBA8, RGB8, RGBA2, RGBA4, R3_G3_B2, RGB5_A1, RGB565 -> GpuFormat.RGBA8_UNORM;

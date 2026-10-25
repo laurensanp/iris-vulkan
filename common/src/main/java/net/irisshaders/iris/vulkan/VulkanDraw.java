@@ -41,6 +41,7 @@ public final class VulkanDraw {
 								  @Nullable BlendModeOverride blendOverride) {
 		List<GpuFormat> formats = new ArrayList<>(views.size());
 		List<Optional<BlendFunction>> blend = new ArrayList<>(views.size());
+		List<Integer> writeMasks = new ArrayList<>(views.size());
 		Optional<BlendFunction> passBlend = toBlendFunction(blendOverride);
 
 		RenderPassDescriptor.Builder descriptor = RenderPassDescriptor.builder(() -> "Iris " + label);
@@ -49,6 +50,7 @@ public final class VulkanDraw {
 			descriptor.withColorAttachment(view);
 			formats.add(view.texture().getFormat());
 			blend.add(passBlend);
+			writeMasks.add(VulkanTextures.writeMask(view.texture(), ColorTargetState.WRITE_ALL));
 		}
 
 		// GL viewports start at the bottom left, like RenderPearl's render areas (images are stored bottom row first).
@@ -57,7 +59,7 @@ public final class VulkanDraw {
 		GpuBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).getBuffer(6);
 
 		try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(descriptor.build())) {
-			VulkanProgram.get(program).bind(pass, formats, blend, ColorTargetState.WRITE_ALL);
+			VulkanProgram.get(program).bind(pass, formats, blend, writeMasks);
 			pass.setVertexBuffer(0, FullScreenQuadRenderer.INSTANCE.getQuad().slice());
 			pass.setIndexBuffer(indices, RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).type());
 			// indexCount, instanceCount, firstIndex, vertexOffset, firstInstance (vkCmdDrawIndexed order)

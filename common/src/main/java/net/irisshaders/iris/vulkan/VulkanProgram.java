@@ -77,8 +77,8 @@ public final class VulkanProgram {
 	private final Map<PipelineKey, CompiledRenderPipeline> pipelines = new HashMap<>();
 	/** Samplers and blocks present in the compiled SPIR-V; exactly what the bind group layout must name. */
 	private final Set<String> liveBindings;
-	/** Vertex shader inputs in the compiled SPIR-V and their SPIR-V base types. */
-	private final Map<String, Integer> vertexInputs = new HashMap<>();
+	/** Vertex shader inputs in the compiled SPIR-V. */
+	private final Map<String, VertexInput> vertexInputs = new HashMap<>();
 	private int nextVariant;
 
 	private VulkanProgram(int id, String name, String vertex, String fragment) {
@@ -250,8 +250,8 @@ public final class VulkanProgram {
 	 * Sets the pipeline for these attachments and binds the block and every sampler from the
 	 * current texture/sampler units (see {@link VulkanUnits}).
 	 */
-	public void bind(RenderPass pass, List<GpuFormat> colorFormats, List<Optional<BlendFunction>> blend, int writeMask) {
-		pass.setPipeline(pipeline(new PipelineKey(List.copyOf(colorFormats), List.copyOf(blend), writeMask)));
+	public void bind(RenderPass pass, List<GpuFormat> colorFormats, List<Optional<BlendFunction>> blend, List<Integer> writeMasks) {
+		pass.setPipeline(pipeline(new PipelineKey(List.copyOf(colorFormats), List.copyOf(blend), List.copyOf(writeMasks))));
 		Set<String> live = liveBindings;
 
 		if (!layout.isEmpty() && live.contains(VulkanUniformLayout.BLOCK_NAME)) {
@@ -329,6 +329,9 @@ public final class VulkanProgram {
 	public CompiledRenderPipeline compileGbuffer(RenderPipeline original, List<VertexFormat> vertexFormats,
 												 List<ColorTargetState> colorTargets, int[] outputLocations) {
 		Set<String> matchedInputs = new HashSet<>();
+		// Inputs declared wider than their element (Solas: vec4 mc_midTexCoord from 2 components): GL fills
+		// in (0, 0, 1) for the rest, RenderPearl refuses the pipeline. They are read at the element's width.
+		Map<String, Integer> narrowedInputs = new HashMap<>();
 		List<VertexFormat> renamedFormats = new ArrayList<>(vertexFormats.size());
 
 		for (VertexFormat format : vertexFormats) {
@@ -343,11 +346,17 @@ public final class VulkanProgram {
 				String name = element.name();
 
 				for (String candidate : new String[]{"iris_" + element.name(), element.name()}) {
-					Integer baseType = vertexInputs.get(candidate);
+					VertexInput input = vertexInputs.get(candidate);
 
-					if (baseType != null && baseType == spvBaseType(element.format()) && !matchedInputs.contains(candidate)) {
+					if (input != null && input.baseType() == spvBaseType(element.format()) && !matchedInputs.contains(candidate)) {
 						name = candidate;
 						matchedInputs.add(candidate);
+
+						if (input.components() > element.format().componentCount()) {
+							narrowedInputs.put(candidate, element.format().componentCount());
+							name = NARROWED_PREFIX + candidate;
+						}
+
 						break;
 					}
 				}
@@ -358,7 +367,7 @@ public final class VulkanProgram {
 			renamedFormats.add(VulkanPipelines.renamed(format, names));
 		}
 
-		String variantVertex = stubInputs(vertex, input -> !matchedInputs.contains(input));
+		String variantVertex = narrowInputs(stubInputs(vertex, input -> !matchedInputs.contains(input)), narrowedInputs);
 		String variantFragment = remapOutputs(fragment, outputLocations);
 		Identifier variantLocation = Identifier.fromNamespaceAndPath(location.getNamespace(), location.getPath() + "/gbuffer_" + nextVariant++);
 
@@ -433,6 +442,44 @@ public final class VulkanProgram {
 		return result.toString();
 	}
 
+	private static final String NARROWED_PREFIX = "iris_vk_";
+
+	/** Declares each input at {@code width} components and pads its uses back to the declared type like GL does. */
+	private static String narrowInputs(String source, Map<String, Integer> widths) {
+		for (Map.Entry<String, Integer> entry : widths.entrySet()) {
+			String input = entry.getKey();
+			Matcher declaration = Pattern.compile("(layout\\s*\\(\\s*location\\s*=\\s*\\d+\\s*\\)\\s*in\\s+)(\\w+)(\\s+)" + input + "(\\s*;)").matcher(source);
+
+			if (!declaration.find()) {
+				continue;
+			}
+
+			String type = declaration.group(2);
+			String prefix = type.startsWith("u") ? "u" : type.startsWith("i") ? "i" : "";
+			int declared = Character.isDigit(type.charAt(type.length() - 1)) ? type.charAt(type.length() - 1) - '0' : 1;
+			int width = entry.getValue();
+			String narrowType = width == 1 ? (prefix.equals("u") ? "uint" : prefix.equals("i") ? "int" : "float") : prefix + "vec" + width;
+			String zero = prefix.equals("u") ? "0u" : prefix.equals("i") ? "0" : "0.0";
+			String one = prefix.equals("u") ? "1u" : prefix.equals("i") ? "1" : "1.0";
+
+			StringBuilder padded = new StringBuilder(type).append('(').append(NARROWED_PREFIX).append(input);
+
+			for (int component = width; component < declared; component++) {
+				padded.append(", ").append(component == 3 ? one : zero);
+			}
+
+			padded.append(')');
+
+			String marker = "@@iris_vk_declaration@@";
+			String newDeclaration = declaration.group(1) + narrowType + declaration.group(3) + NARROWED_PREFIX + input + declaration.group(4);
+			source = source.substring(0, declaration.start()) + marker + source.substring(declaration.end());
+			source = source.replaceAll("\\b" + input + "\\b", Matcher.quoteReplacement(padded.toString()));
+			source = source.replace(marker, newDeclaration);
+		}
+
+		return source;
+	}
+
 	/** Moves fragment output i to location outputLocations[i]. */
 	private static String remapOutputs(String source, int[] outputLocations) {
 		Matcher matcher = OUTPUT.matcher(source);
@@ -489,7 +536,7 @@ public final class VulkanProgram {
 
 						if (type == ShaderType.VERTEX) {
 							for (SpvModule.Reflection.InterfaceVariable input : module.reflect().inputs()) {
-								vertexInputs.put(input.name(), input.type().baseType());
+								vertexInputs.put(input.name(), new VertexInput(input.type().baseType(), Math.max(1, input.type().vectorSize())));
 							}
 						}
 					}
@@ -528,7 +575,7 @@ public final class VulkanProgram {
 			.withDepthStencilState(Optional.empty());
 
 		for (int i = 0; i < key.colorFormats.size(); i++) {
-			builder.withColorTargetState(i, new ColorTargetState(key.blend.get(i), key.colorFormats.get(i), key.writeMask));
+			builder.withColorTargetState(i, new ColorTargetState(key.blend.get(i), key.colorFormats.get(i), key.writeMasks.get(i)));
 		}
 
 		// RenderPearl logs compile errors and returns a placeholder instead of throwing.
@@ -560,7 +607,10 @@ public final class VulkanProgram {
 		return name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_./-]", "_");
 	}
 
-	private record PipelineKey(List<GpuFormat> colorFormats, List<Optional<BlendFunction>> blend, int writeMask) {
+	private record PipelineKey(List<GpuFormat> colorFormats, List<Optional<BlendFunction>> blend, List<Integer> writeMasks) {
+	}
+
+	private record VertexInput(int baseType, int components) {
 	}
 
 	/** Serves one gbuffers variant's GLSL. */

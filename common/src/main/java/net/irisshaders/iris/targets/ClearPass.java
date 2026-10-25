@@ -6,6 +6,7 @@ import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanTextures;
 import net.minecraft.client.Minecraft;
 import org.joml.Vector4f;
 
@@ -33,7 +34,9 @@ public class ClearPass {
 			Vector4f clearColor = this.color != null ? this.color : Objects.requireNonNull(defaultClearColor);
 
 			for (GpuTextureView view : framebuffer.vulkanColorViews()) {
-				RenderSystem.getDevice().createCommandEncoder().clearColorTexture(view.texture(), clearColor);
+				// A format without alpha keeps alpha 1 (see VulkanTextures.keepOpaqueAlpha).
+				Vector4f color = VulkanTextures.hasOpaqueAlpha(view.texture()) ? new Vector4f(clearColor.x, clearColor.y, clearColor.z, 1.0f) : clearColor;
+				RenderSystem.getDevice().createCommandEncoder().clearColorTexture(view.texture(), color);
 			}
 
 			return;
