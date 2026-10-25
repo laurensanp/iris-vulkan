@@ -138,6 +138,10 @@ loom {
             if (project.hasProperty("jfrProfile")) {
                 vmArg("-XX:StartFlightRecording=filename=" + file("run/profile.jfr").absolutePath + ",settings=profile")
             }
+            // -PdlssScreen=mod|sodium|sodium2 opens Iris DLSS' settings after joining (for the test screenshot).
+            if (project.hasProperty("dlssScreen")) {
+                vmArg("-Diris-dlss.debugScreen=" + project.property("dlssScreen").toString())
+            }
             if (project.hasProperty("windowSize")) {
                 val size = project.property("windowSize").toString().split("x")
                 programArgs("--width", size[0], "--height", size[1])
