@@ -155,7 +155,9 @@ public class RenderTargets {
 
 	public boolean resizeIfNeeded(int newDepthBufferVersion, GpuTexture newDepthTextureId, int newWidth, int newHeight, DepthBufferFormat newDepthFormat, PackDirectives packDirectives) {
 		boolean recreateDepth = false;
-		if (cachedDepthBufferVersion != newDepthBufferVersion) {
+		// The version counts depth recreations of one render target; a different main target (iris-dlss swaps
+		// a world and a GUI target, same size with DLAA) can have the same version but another depth texture.
+		if (cachedDepthBufferVersion != newDepthBufferVersion || currentDepthTexture != newDepthTextureId) {
 			recreateDepth = true;
 			currentDepthTexture = newDepthTextureId;
 			cachedDepthBufferVersion = newDepthBufferVersion;
