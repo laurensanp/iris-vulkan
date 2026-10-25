@@ -119,6 +119,9 @@ loom {
             if (project.hasProperty("testCommands")) {
                 vmArg("-Diris.vulkanTest.commands=" + project.property("testCommands").toString())
             }
+            if (project.hasProperty("testTicks")) {
+                vmArg("-Diris.vulkanTest.captureTicks=" + project.property("testTicks").toString())
+            }
             if (project.hasProperty("testPitch")) {
                 vmArg("-Diris.vulkanTest.pitch=" + project.property("testPitch").toString())
             }
@@ -126,6 +129,10 @@ loom {
             if (project.hasProperty("dlssBenchmark")) {
                 vmArg("-Diris-dlss.benchmark=true")
                 vmArg("-Diris.vulkanTest.captureTicks=2600")
+            }
+            // -PdlssForeignAcquire: the game's swapchain image is acquired outside VulkanGpuSurface, like Lunar Client does.
+            if (project.hasProperty("dlssForeignAcquire")) {
+                vmArg("-Diris-dlss.debugForeignAcquire=true")
             }
             if (project.hasProperty("windowSize")) {
                 val size = project.property("windowSize").toString().split("x")
