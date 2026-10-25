@@ -115,6 +115,13 @@ loom {
             if (project.hasProperty("testWorld")) {
                 vmArg("-Diris.vulkanTest.world=" + project.property("testWorld").toString())
             }
+            // -PtestCommands="summon pig ~ ~ ~3;time set 13000" runs commands after joining; -PtestPitch=-30 tilts the camera.
+            if (project.hasProperty("testCommands")) {
+                vmArg("-Diris.vulkanTest.commands=" + project.property("testCommands").toString())
+            }
+            if (project.hasProperty("testPitch")) {
+                vmArg("-Diris.vulkanTest.pitch=" + project.property("testPitch").toString())
+            }
             if (project.hasProperty("dlssDebug")) {
                 val mode = project.property("dlssDebug").toString()
                 vmArg(if (mode == "walk") "-Diris-dlss.debugWalk=true" else "-Diris-dlss.debugSpin=1.5")

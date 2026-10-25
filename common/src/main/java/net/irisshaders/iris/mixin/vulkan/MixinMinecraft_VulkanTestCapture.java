@@ -31,6 +31,22 @@ public class MixinMinecraft_VulkanTestCapture {
 
 		iris$ticksInWorld++;
 
+		// Optional test setup: chat commands separated by ';' (e.g. "summon pig ~ ~ ~3;time set 13000"),
+		// then a fixed camera pitch in degrees (negative looks up).
+		String commands = System.getProperty("iris.vulkanTest.commands");
+
+		if (iris$ticksInWorld == 20 && commands != null) {
+			for (String command : commands.split(";")) {
+				minecraft.player.connection.sendCommand(command.trim());
+			}
+		}
+
+		String pitch = System.getProperty("iris.vulkanTest.pitch");
+
+		if (pitch != null) {
+			minecraft.player.setXRot(Float.parseFloat(pitch));
+		}
+
 		if (iris$ticksInWorld == IRIS_CAPTURE_TICKS) {
 			Screenshot.grab(minecraft.gameDirectory, "vulkan-test.png", minecraft.gameRenderer.mainRenderTarget(), 1,
 				message -> Iris.logger.info("Vulkan test: {}", message.getString()));

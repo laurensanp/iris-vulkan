@@ -103,12 +103,23 @@ public class VulkanTransformer {
 				root.rename("gl_InstanceID", "gl_InstanceIndex");
 
 				if (parameters.patch == Patch.VANILLA) {
-					VANILLA_BINDINGS.forEach(root::rename);
+					renameBindings(root, VANILLA_BINDINGS);
 				} else if (parameters.patch == Patch.SODIUM) {
-					SODIUM_BINDINGS.forEach(root::rename);
+					renameBindings(root, SODIUM_BINDINGS);
 				}
 			});
 		}
+	}
+
+	/** Gives Iris' names the binding names, first moving aside pack identifiers that already use them (e.g. Solas' Fog()). */
+	private static void renameBindings(Root root, Map<String, String> bindings) {
+		bindings.forEach((from, to) -> {
+			if (root.identifierIndex.has(from) && root.identifierIndex.has(to)) {
+				root.rename(to, "iris_pack_" + to);
+			}
+
+			root.rename(from, to);
+		});
 	}
 
 	private static void collectUniforms(TranslationUnit tree, Root root, Map<String, VulkanUniformLayout.Declaration> uniforms) {
@@ -198,20 +209,21 @@ public class VulkanTransformer {
 			declaration.detachParent();
 		}
 
-		StringBuilder declarations = new StringBuilder();
 		StringBuilder functions = new StringBuilder();
 
+		// Every declaration is parsed as a node of its own: a string holding several keeps only the first.
 		for (String stub : stubTypes) {
-			declarations.append("struct ").append(stub).append(" { int unused; };\n");
+			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS, "struct " + stub + " { int unused; };");
 			appendStubFunctions(functions, stub);
 		}
 
-		// The constants are parsed on their own, once the struct is in the tree (the parser must know the type name).
-		tree.parseAndInjectNodes(t, ASTInjectionPoint.BEFORE_DECLARATIONS, declarations.toString());
+		// The constants are parsed once the structs are in the tree (the parser must know the type names).
 		for (String constant : constants.toString().split("\n")) {
 			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, constant);
 		}
-		tree.parseAndInjectNodes(t, ASTInjectionPoint.BEFORE_FUNCTIONS, functions.toString());
+		for (String function : functions.toString().split("\n")) {
+			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, function);
+		}
 	}
 
 	/** IrisStub + result kind (F/I/U) + dimension, or null for samplers RenderPearl can bind. */
