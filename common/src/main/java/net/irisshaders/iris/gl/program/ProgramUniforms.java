@@ -291,7 +291,7 @@ public class ProgramUniforms {
 
 		@Override
 		public OptionalInt location(String name, UniformType type) {
-			int id = GlStateManager._glGetUniformLocation(program, name);
+			int id = resolveLocation(name, type);
 
 			if (id == -1) {
 				return OptionalInt.empty();
@@ -309,7 +309,18 @@ public class ProgramUniforms {
 			return OptionalInt.of(id);
 		}
 
+		/** The uniform's location in the program, -1 if it has none (Vulkan: see VkProgramBuilder). */
+		protected int resolveLocation(String name, UniformType type) {
+			return GlStateManager._glGetUniformLocation(program, name);
+		}
+
 		public ProgramUniforms buildUniforms() {
+			if (net.irisshaders.iris.mixin.IrisMixinPlugin.usingVulkan) {
+				// Types were checked against the SPIR-V reflection when locations were resolved.
+				return new ProgramUniforms(ImmutableList.copyOf(once.values()), ImmutableList.copyOf(perTick.values()),
+					ImmutableList.copyOf(perFrame.values()), ImmutableList.copyOf(dynamic.values()),
+					ImmutableList.copyOf(notifiersToReset));
+			}
 			// Check for any unsupported uniforms and warn about them so that we can easily figure out what uniforms we
 			// need to add.
 			int activeUniforms = GlStateManager.glGetProgrami(program, GL20C.GL_ACTIVE_UNIFORMS);

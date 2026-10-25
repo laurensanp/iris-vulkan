@@ -35,7 +35,7 @@ public class IntUniform extends Uniform {
 
 		if (cachedValue != newValue) {
 			cachedValue = newValue;
-			GlStateManager._glUniform1i(location, newValue);
+			net.irisshaders.iris.gl.IrisRenderSystem.uniform1i(location, newValue);
 		}
 	}
 }

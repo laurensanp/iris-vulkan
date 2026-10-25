@@ -31,7 +31,7 @@ public class MatrixFromFloatArrayUniform extends Uniform {
 			buffer.put(cachedValue);
 			buffer.rewind();
 
-			GL46C.glUniformMatrix4fv(location, false, buffer);
+			net.irisshaders.iris.gl.IrisRenderSystem.uniformMatrix4fv(location, false, buffer);
 		}
 	}
 }

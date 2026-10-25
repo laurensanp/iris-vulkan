@@ -121,11 +121,19 @@ public class IrisRenderSystem {
 
 	public static void uniformMatrix4fv(int location, boolean transpose, FloatBuffer matrix) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.matrix(location, 4, matrix);
+			return;
+		}
 		GL32C.glUniformMatrix4fv(location, transpose, matrix);
 	}
 
 	public static void uniformMatrix4fv(int location, boolean transpose, float[] matrix) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.matrix(location, 4, matrix);
+			return;
+		}
 		GL32C.glUniformMatrix4fv(location, transpose, matrix);
 	}
 
@@ -134,38 +142,75 @@ public class IrisRenderSystem {
 		GL32C.glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border);
 	}
 
+	public static void uniform1i(int location, int v0) {
+		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.ints(location, v0);
+			return;
+		}
+		GlStateManager._glUniform1i(location, v0);
+	}
+
 	public static void uniform1f(int location, float v0) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.floats(location, v0);
+			return;
+		}
 		GL32C.glUniform1f(location, v0);
 	}
 
 	public static void uniform2f(int location, float v0, float v1) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.floats(location, v0, v1);
+			return;
+		}
 		GL32C.glUniform2f(location, v0, v1);
 	}
 
 	public static void uniform2i(int location, int v0, int v1) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.ints(location, v0, v1);
+			return;
+		}
 		GL32C.glUniform2i(location, v0, v1);
 	}
 
 	public static void uniform3f(int location, float v0, float v1, float v2) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.floats(location, v0, v1, v2);
+			return;
+		}
 		GL32C.glUniform3f(location, v0, v1, v2);
 	}
 
 	public static void uniform3i(int location, int v0, int v1, int v2) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.ints(location, v0, v1, v2);
+			return;
+		}
 		GL32C.glUniform3i(location, v0, v1, v2);
 	}
 
 	public static void uniform4f(int location, float v0, float v1, float v2, float v3) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.floats(location, v0, v1, v2, v3);
+			return;
+		}
 		GL32C.glUniform4f(location, v0, v1, v2, v3);
 	}
 
 	public static void uniform4i(int location, int v0, int v1, int v2, int v3) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.ints(location, v0, v1, v2, v3);
+			return;
+		}
 		GL32C.glUniform4i(location, v0, v1, v2, v3);
 	}
 
@@ -563,11 +608,19 @@ public class IrisRenderSystem {
 
 	public static void uniformMatrix3fv(int index, boolean b, FloatBuffer buf) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.matrix(index, 3, buf);
+			return;
+		}
 		GL46C.glUniformMatrix3fv(index, b, buf);
 	}
 
 	public static void uniformMatrix3fv(int index, boolean b, float[] buf) {
 		RenderSystem.assertOnRenderThread();
+		if (vulkan()) {
+			net.irisshaders.iris.vulkan.VkUniforms.matrix(index, 3, buf);
+			return;
+		}
 		GL46C.glUniformMatrix3fv(index, b, buf);
 	}
 

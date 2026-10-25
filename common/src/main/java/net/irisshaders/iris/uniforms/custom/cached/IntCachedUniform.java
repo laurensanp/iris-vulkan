@@ -28,7 +28,7 @@ public class IntCachedUniform extends CachedUniform {
 
 	@Override
 	public void push(int location) {
-		GlStateManager._glUniform1i(location, this.cached);
+		net.irisshaders.iris.gl.IrisRenderSystem.uniform1i(location, this.cached);
 	}
 
 	@Override

@@ -28,7 +28,7 @@ public class BooleanCachedUniform extends CachedUniform {
 
 	@Override
 	public void push(int location) {
-		GlStateManager._glUniform1i(location, this.cached ? 1 : 0);
+		net.irisshaders.iris.gl.IrisRenderSystem.uniform1i(location, this.cached ? 1 : 0);
 	}
 
 	@Override

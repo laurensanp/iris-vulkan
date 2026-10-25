@@ -48,7 +48,7 @@ public class MatrixUniform extends Uniform {
 			cachedValue.get(buffer);
 			buffer.rewind();
 
-			GL46C.glUniformMatrix4fv(location, false, buffer);
+			net.irisshaders.iris.gl.IrisRenderSystem.uniformMatrix4fv(location, false, buffer);
 		}
 	}
 }
