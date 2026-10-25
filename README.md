@@ -1,5 +1,29 @@
 ![Iris: An open-source shaders mod compatible with OptiFine shader packs](docs/banner.png)
 
+> ## This is an unofficial fork: Iris on Vulkan
+>
+> This fork runs Iris shader packs on Minecraft 26.3's **Vulkan** renderer, so they work together with
+> NVIDIA DLSS Super Resolution and Frame Generation from
+> [Iris DLSS Bridge](https://github.com/laurensanp/iris-dlss). It is experimental and **not supported by
+> the Iris team**; please report problems [here](https://github.com/laurensanp/iris-vulkan/issues), not
+> to upstream Iris.
+>
+> * **Download**: `iris-fabric-vulkan+mc26.3.jar` from the
+>   [Releases](https://github.com/laurensanp/iris-vulkan/releases). It replaces regular Iris; it needs
+>   Sodium 0.9.2+ for 26.3. Install and settings: see the
+>   [Iris DLSS Bridge README](https://github.com/laurensanp/iris-dlss#readme).
+> * **Branch**: `vulkan-m2` (current work). Without Iris DLSS Bridge (or on OpenGL) it behaves like
+>   regular Iris.
+> * **Works**: gbuffers, deferred, composite, final programs. Tested: Solas 3.8, Complementary
+>   Reimagined / Unbound, BSL, MakeUp Ultra Fast.
+> * **Not yet**: shadows (shadow pass), compute shaders, custom / 3D images, geometry and tessellation
+>   shaders. Photon, Bliss and Sildur's don't compile yet.
+> * **Build**: JDK 25 in `JAVA_HOME`, then `gradlew :fabric:build` (jar in `build/libs`). Test loop and
+>   options: [Iris DLSS Bridge README](https://github.com/laurensanp/iris-dlss#test-loop-in-the-fork).
+>   The Vulkan code is in `common/src/main/java/net/irisshaders/iris/vulkan`; the design is described in
+>   the [CLAUDE.md](https://github.com/laurensanp/iris-dlss/blob/main/CLAUDE.md) of Iris DLSS Bridge.
+> * License: LGPL-3.0, like Iris.
+
 # Iris
 
 ## Links
