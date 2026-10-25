@@ -46,6 +46,38 @@ public final class VkShaderCompiler {
 		}
 	}
 
+	/**
+	 * First binding of a stage's resources; stages get separate ranges of 64 (each has its own uniform
+	 * block). Within a range every resource gets its own number (see renumberBindings).
+	 */
+	public static int bindingBase(int kind) {
+		return kind == FRAGMENT ? 128 : kind == GEOMETRY ? 64 : 0;
+	}
+
+	public static final int STAGE_BINDINGS = 64;
+
+	/**
+	 * Gives every Binding decoration (OpDecorate %id Binding n) of a SPIR-V module its own number from
+	 * base on: glslang numbers textures, images and buffers each from 0, Vulkan has one namespace.
+	 */
+	static void renumberBindings(ByteBuffer spirv, int base) {
+		int next = base;
+		java.nio.IntBuffer words = spirv.asIntBuffer();
+		int position = 5; // header
+		while (position < words.limit()) {
+			int instruction = words.get(position);
+			int wordCount = instruction >>> 16;
+			int opcode = instruction & 0xFFFF;
+			if (opcode == 71 && wordCount == 4 && words.get(position + 2) == 33) {
+				words.put(position + 3, next++);
+			}
+			if (wordCount == 0) {
+				break;
+			}
+			position += wordCount;
+		}
+	}
+
 	public static synchronized Result compile(String name, String source, int kind) {
 		source = enableVulkanExtensions(source);
 		if (compiler == 0L) {
@@ -59,7 +91,8 @@ public final class VkShaderCompiler {
 			Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
 			Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
 			Shaderc.shaderc_compile_options_set_auto_combined_image_sampler(options, true);
-			Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_performance);
+			// No optimizer: it would strip the names reflection maps uniforms and samplers by.
+			Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_zero);
 			long result = Shaderc.shaderc_compile_into_spv(compiler, source, kind, name, "main", options);
 			try {
 				if (Shaderc.shaderc_result_get_compilation_status(result) != Shaderc.shaderc_compilation_status_success) {
@@ -68,6 +101,7 @@ public final class VkShaderCompiler {
 				ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
 				ByteBuffer copy = MemoryUtil.memAlloc(bytes.remaining());
 				MemoryUtil.memCopy(bytes, copy);
+				renumberBindings(copy, bindingBase(kind));
 				return new Result(copy, null);
 			} finally {
 				Shaderc.shaderc_result_release(result);

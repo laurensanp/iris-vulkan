@@ -89,6 +89,16 @@ public final class VkPackProbe {
 		}
 		VkShaderCompiler.Result result = VkShaderCompiler.compile(name, glsl, kind);
 		if (result.ok()) {
+			try {
+				VkReflection reflection = VkReflection.of(result.spirv());
+				Iris.logger.info("[Iris VK] {}: {} uniforms in {}, images {}, inputs {}, outputs {}", name,
+					reflection.uniformCount(), reflection.blocks.stream().map(b -> b.name() + "@" + b.binding() + "/" + b.size() + "B").toList(),
+					reflection.images.stream().map(i -> i.name() + "@" + i.binding() + (i.storage() ? "(storage)" : "")).toList(),
+					reflection.inputs.stream().map(v -> v.name() + "@" + v.location()).toList(),
+					reflection.outputs.stream().map(v -> v.name() + "@" + v.location()).toList());
+			} catch (RuntimeException e) {
+				errors.append(name).append(": reflection ").append(e).append('\n');
+			}
 			MemoryUtil.memFree(result.spirv());
 			return;
 		}
