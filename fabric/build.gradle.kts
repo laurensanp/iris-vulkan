@@ -122,6 +122,15 @@ loom {
             if (project.hasProperty("testPitch")) {
                 vmArg("-Diris.vulkanTest.pitch=" + project.property("testPitch").toString())
             }
+            // -PdlssBenchmark cycles Iris DLSS' modes once in the world and logs fps; -PwindowSize=1920x1080.
+            if (project.hasProperty("dlssBenchmark")) {
+                vmArg("-Diris-dlss.benchmark=true")
+                vmArg("-Diris.vulkanTest.captureTicks=2600")
+            }
+            if (project.hasProperty("windowSize")) {
+                val size = project.property("windowSize").toString().split("x")
+                programArgs("--width", size[0], "--height", size[1])
+            }
             if (project.hasProperty("dlssDebug")) {
                 val mode = project.property("dlssDebug").toString()
                 vmArg(if (mode == "walk") "-Diris-dlss.debugWalk=true" else "-Diris-dlss.debugSpin=1.5")
