@@ -99,6 +99,7 @@ public final class VulkanProgram {
 		this.samplerUnits = new int[samplers.size()];
 
 		this.uniforms = MemoryUtil.memCalloc(layout.size());
+		layout.writeDefaults(uniforms);
 	}
 
 	/** glCreateProgram + attach + link: returns the program "name". */

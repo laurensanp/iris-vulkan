@@ -1393,8 +1393,7 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		// A lot of dimension mods touch sky rendering, FabricSkyboxes injects at HEAD and cancels, etc.
 		DimensionType.Skybox skyType = Minecraft.getInstance().level.dimensionType().skybox();
 
-		// The horizon box is drawn with a gbuffers program, which Vulkan doesn't have before M2.
-		if (!IrisVulkan.isActive() && shouldRenderSkyDisc && (skyType == DimensionType.Skybox.OVERWORLD || Minecraft.getInstance().level.dimensionType().hasSkyLight())) {
+		if (shouldRenderSkyDisc && (skyType == DimensionType.Skybox.OVERWORLD || Minecraft.getInstance().level.dimensionType().hasSkyLight())) {
 			Vector3d fogColor3 = CapturedRenderingState.INSTANCE.getFogColor();
 
 			// NB: The alpha value must be 1.0 here, or else you will get a bunch of bugs. Sildur's Vibrant Shaders

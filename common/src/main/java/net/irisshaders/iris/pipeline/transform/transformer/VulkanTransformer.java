@@ -18,6 +18,7 @@ import io.github.douira.glsl_transformer.ast.node.type.specifier.ArraySpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinFixedTypeSpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinNumericTypeSpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.TypeSpecifier;
+import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.ASTParser;
@@ -145,7 +146,8 @@ public class VulkanTransformer {
 				int array = typeArray > 0 ? typeArray : arrayLength(member.getArraySpecifier());
 
 				if (member.getInitializer() != null) {
-					Iris.logger.warn("Uniform {} has a default value, which a Vulkan uniform block can't keep; it starts at zero.", name);
+					// A block member can't have an initializer; the program writes the value into its block instead.
+					VulkanUniformLayout.rememberDefault(name, type, ASTPrinter.printCompact(member.getInitializer()));
 				}
 
 				VulkanUniformLayout.Declaration previous = uniforms.putIfAbsent(name, new VulkanUniformLayout.Declaration(type, name, array));

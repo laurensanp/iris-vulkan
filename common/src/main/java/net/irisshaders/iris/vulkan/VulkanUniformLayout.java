@@ -1,11 +1,13 @@
 package net.irisshaders.iris.vulkan;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -18,6 +20,10 @@ public final class VulkanUniformLayout {
 	public static final VulkanUniformLayout EMPTY = new VulkanUniformLayout(List.of());
 
 	private static final Pattern BLOCK = Pattern.compile("uniform\\s+" + BLOCK_NAME + "\\s*\\{([^}]*)}");
+	/** GLSL initializers of uniforms (`uniform float x = 1.0;`), by name and type, from the transform. */
+	private static final Map<String, String> DEFAULTS = new ConcurrentHashMap<>();
+	private static final Pattern NUMBER = Pattern.compile("true|false|[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?");
+
 	private static final Pattern MEMBER = Pattern.compile("(\\w+)\\s+(\\w+)\\s*(?:\\[\\s*(\\d+)\\s*])?");
 
 	private final List<Member> members;
@@ -79,6 +85,60 @@ public final class VulkanUniformLayout {
 		}
 
 		return build(declarations);
+	}
+
+	/** A uniform's initializer, which a uniform block member can't have: written into the block by {@link #writeDefaults}. */
+	public static void rememberDefault(String name, String type, String initializer) {
+		DEFAULTS.put(type + " " + name, initializer);
+	}
+
+	/**
+	 * Writes remembered initializers into a fresh block. Literals and constructors of literals are
+	 * supported (`1.0`, `vec3(1.0)`, `ivec2(1, 2)`); a single value fills all components like a GLSL
+	 * constructor. Anything else starts at zero, as before.
+	 */
+	public void writeDefaults(ByteBuffer block) {
+		for (Member member : members) {
+			String initializer = DEFAULTS.get(member.type + " " + member.name);
+
+			if (initializer == null) {
+				continue;
+			}
+
+			List<String> values = new ArrayList<>();
+			Matcher literal = NUMBER.matcher(initializer.replaceAll("\\b[iub]?vec\\d\\b|\\bmat\\d\\b", ""));
+
+			while (literal.find()) {
+				values.add(literal.group());
+			}
+
+			int components = componentCount(member.type);
+
+			if (member.arrayLength > 0 || member.isMatrix() || components == 0 || (values.size() != 1 && values.size() != components)) {
+				VulkanUnsupported.once("uniform default value " + member.type + " " + member.name + " = " + initializer + " (starts at zero)");
+				continue;
+			}
+
+			boolean integer = member.type.startsWith("i") || member.type.startsWith("u") || member.type.startsWith("b") || member.type.equals("int") || member.type.equals("uint") || member.type.equals("bool");
+
+			for (int i = 0; i < components; i++) {
+				String value = values.get(values.size() == 1 ? 0 : i);
+				double number = value.equals("true") ? 1 : value.equals("false") ? 0 : Double.parseDouble(value);
+
+				if (integer) {
+					block.putInt(member.offset + i * 4, (int) number);
+				} else {
+					block.putFloat(member.offset + i * 4, (float) number);
+				}
+			}
+		}
+	}
+
+	private static int componentCount(String type) {
+		return switch (type) {
+			case "float", "int", "uint", "bool" -> 1;
+			default -> type.matches("[iub]?vec[234]") ? type.charAt(type.length() - 1) - '0' : 0;
+		};
 	}
 
 	public String toGlsl() {
