@@ -37,7 +37,8 @@ public class IrisConfig implements ConfigEntryPoint {
 	public static final Identifier COLOR = Identifier.fromNamespaceAndPath("iris", "textures/gui/config-icon.png");
     @Override
     public void registerConfigLate(ConfigBuilder builder) {
-        boolean vk = IrisMixinPlugin.usingVulkan;
+        // Upstream Iris shows a "switch to OpenGL" placeholder on Vulkan; this fork runs shader packs there.
+        boolean vk = false;
 
         var modOptions = builder.registerOwnModOptions()
                 .setName("Iris")
@@ -103,23 +104,9 @@ public class IrisConfig implements ConfigEntryPoint {
                             Identifier.parse("sodium:general.graphics_api"),
                             builder.createEnumOption(Identifier.fromNamespaceAndPath("sodium", "general.graphics_api"),
                                             PreferredGraphicsApi.class)
-                                    .setBinding((value) -> {
-                                        if (((GpuDeviceAccessor) RenderSystem.getDevice()).getBackend() instanceof GlDevice && value == PreferredGraphicsApi.VULKAN) {
-                                            Screen s = Minecraft.getInstance().gui.screen();
-
-                                            Minecraft.getInstance().gui.setScreen(new ConfirmScreen(i -> {
-                                                if (i) {
-                                                    Minecraft.getInstance().options.preferredGraphicsBackend().set(value);
-                                                    Minecraft.getInstance().gui.setScreen(s);
-                                                } else {
-                                                    s.onClose();
-                                                    Minecraft.getInstance().gui.setScreen(VideoSettingsScreen.createScreen(Minecraft.getInstance().gui.screen()));
-                                                }
-                                            }, Component.literal("Iris"), Component.literal("Setting the backend to Vulkan will remove your ability to use shaders.\nWould you like to proceed?")));
-                                        } else {
-                                            Minecraft.getInstance().options.preferredGraphicsBackend().set(value);
-                                        }
-                                    }, () -> Minecraft.getInstance().options.preferredGraphicsBackend().get())
+                                    // No "Vulkan removes shaders" warning: shader packs run on Vulkan in this fork.
+                                    .setBinding((value) -> Minecraft.getInstance().options.preferredGraphicsBackend().set(value),
+                                        () -> Minecraft.getInstance().options.preferredGraphicsBackend().get())
                     );
         }
     }
