@@ -4,6 +4,7 @@ import io.github.douira.glsl_transformer.ast.node.Identifier;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
+import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
@@ -13,8 +14,13 @@ import io.github.douira.glsl_transformer.ast.node.type.qualifier.StorageQualifie
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.StorageQualifier.StorageType;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.TypeQualifier;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.TypeQualifierPart;
+import io.github.douira.glsl_transformer.ast.node.type.specifier.ArraySpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.BuiltinNumericTypeSpecifier;
 import io.github.douira.glsl_transformer.ast.node.type.specifier.TypeSpecifier;
+import io.github.douira.glsl_transformer.ast.node.type.specifier.TypeReference;
+import io.github.douira.glsl_transformer.ast.node.type.struct.StructDeclarator;
+import io.github.douira.glsl_transformer.ast.node.type.struct.StructMember;
+import io.github.douira.glsl_transformer.ast.node.type.struct.StructSpecifier;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.query.match.Matcher;
 import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
@@ -114,6 +120,8 @@ public class LayoutTransformer {
 	private static final Template<ExternalDeclaration> layoutedInDeclarationTemplate = Template
 		.withExternalDeclaration("in __type __name;");
 	private static final String attachTargetPrefix = "outColor";
+	/** Key in the location map: the first location after the previous stage's outputs. */
+	private static final String NEXT_FREE_LOCATION = "iris_vk_nextFreeLocation";
 	private static final List<String> reservedWords = List.of("texture");
 
 	static {
@@ -239,7 +247,8 @@ public class LayoutTransformer {
 
 				map.put(name, location);
 
-				newDeclarationData.add(new NewDeclarationData(typeQualifier, typeSpecifier, member, location++, name));
+				newDeclarationData.add(new NewDeclarationData(typeQualifier, typeSpecifier, member, location, name));
+				location += locationCount(root, typeSpecifier, member.getArraySpecifier());
 				addedDeclarations++;
 			}
 
@@ -273,6 +282,7 @@ public class LayoutTransformer {
 			newDeclarations.add(newDeclaration);
 		}
 		tree.injectNodes(ASTInjectionPoint.BEFORE_DECLARATIONS, newDeclarations);
+		map.put(NEXT_FREE_LOCATION, locateStructVaryings(root, StorageType.OUT, map, location));
 
 		return map;
 	}
@@ -303,7 +313,10 @@ public class LayoutTransformer {
 				String name = member.getName().getName();
 
 				if (!map.containsKey(name)) {
-					continue;
+					// Not written by the previous stage: GL reads undefined values, Vulkan still wants a location.
+					int next = map.getOrDefault(NEXT_FREE_LOCATION, 0);
+					map.put(name, next);
+					map.put(NEXT_FREE_LOCATION, next + locationCount(root, typeSpecifier, member.getArraySpecifier()));
 				}
 
 				newDeclarationData.add(new NewDeclarationData(typeQualifier, typeSpecifier, member, map.getInt(name), name));
@@ -340,6 +353,105 @@ public class LayoutTransformer {
 			newDeclarations.add(newDeclaration);
 		}
 		tree.injectNodes(ASTInjectionPoint.BEFORE_DECLARATIONS, newDeclarations);
+		locateStructVaryings(root, StorageType.IN, map, 0);
+	}
+
+	/**
+	 * Locations a varying occupies: one per matrix column, two per column for dvec3/dvec4, the sum of the
+	 * members for a struct, times the array length (GLSL 4.6 section 4.4.1). Counting each varying as one
+	 * made later ones overlap a mat4.
+	 */
+	private static int locationCount(Root root, TypeSpecifier specifier, ArraySpecifier memberArray) {
+		int count = 1;
+
+		if (specifier instanceof BuiltinNumericTypeSpecifier numeric) {
+			Type type = numeric.type;
+			int columns = 1;
+			int rows = type.isScalar() ? 1 : type.getDimensions()[type.getDimensions().length - 1];
+
+			if (type.isMatrix()) {
+				String name = type.getCompactName();
+				int digit = name.indexOf("mat") + 3;
+				columns = digit < name.length() && Character.isDigit(name.charAt(digit)) ? name.charAt(digit) - '0' : type.getDimensions()[0];
+			}
+
+			count = columns * (type.getBitDepth() == 64 && rows > 2 ? 2 : 1);
+		} else {
+			StructSpecifier struct = specifier instanceof StructSpecifier inline ? inline : null;
+
+			if (specifier instanceof TypeReference reference) {
+				for (StructSpecifier candidate : root.nodeIndex.get(StructSpecifier.class)) {
+					if (candidate.getName() != null && candidate.getName().getName().equals(reference.getReference().getName())) {
+						struct = candidate;
+					}
+				}
+			}
+
+			if (struct != null) {
+				count = 0;
+
+				for (StructMember member : struct.getStructBody().getMembers()) {
+					for (StructDeclarator declarator : member.getDeclarators()) {
+						count += locationCount(root, member.getType().getTypeSpecifier(), declarator.getArraySpecifier());
+					}
+				}
+			}
+		}
+
+		for (ArraySpecifier array : new ArraySpecifier[]{specifier.getArraySpecifier(), memberArray}) {
+			if (array == null) {
+				continue;
+			}
+
+			for (Expression dimension : array.getDimensions()) {
+				if (dimension instanceof LiteralExpression literal && literal.getInteger() > 0) {
+					count *= (int) literal.getInteger();
+				}
+			}
+		}
+
+		return Math.max(count, 1);
+	}
+
+	/**
+	 * Gives in/out declarations of struct type (Photon's "flat out CloudsParameters clouds_params") a location:
+	 * the matchers above only take built-in types. Outputs continue at {@code location} and go into
+	 * {@code map}; inputs take the location their name has in {@code map}. Returns the next free location.
+	 */
+	private static int locateStructVaryings(Root root, StorageType storage, Object2IntMap<String> map, int location) {
+		for (DeclarationExternalDeclaration external : new ArrayList<>(root.nodeIndex.get(DeclarationExternalDeclaration.class))) {
+			if (!(external.getDeclaration() instanceof TypeAndInitDeclaration declaration)
+				|| declaration.getType().getTypeSpecifier() instanceof BuiltinNumericTypeSpecifier
+				|| declaration.getMembers().size() != 1) {
+				continue;
+			}
+
+			TypeQualifier qualifier = declaration.getType().getTypeQualifier();
+
+			if (qualifier == null || qualifier.getParts().stream().anyMatch(LayoutQualifier.class::isInstance)
+				|| qualifier.getParts().stream().noneMatch(part -> part instanceof StorageQualifier storageQualifier && storageQualifier.storageType == storage)) {
+				continue;
+			}
+
+			DeclarationMember member = declaration.getMembers().get(0);
+			String name = member.getName().getName();
+			int assigned;
+
+			if (storage == StorageType.OUT) {
+				assigned = location;
+				map.put(name, assigned);
+				location += locationCount(root, declaration.getType().getTypeSpecifier(), member.getArraySpecifier());
+			} else if (map.containsKey(name)) {
+				assigned = map.getInt(name);
+			} else {
+				continue;
+			}
+
+			qualifier.getChildren().add(0, new LayoutQualifier(Stream.of(new NamedLayoutQualifierPart(
+				new Identifier("location"), new LiteralExpression(Type.INT32, assigned)))));
+		}
+
+		return location;
 	}
 
 	private static class DeclarationMatcher extends Matcher<ExternalDeclaration> {

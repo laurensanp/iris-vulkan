@@ -1,6 +1,8 @@
 package net.irisshaders.iris.pipeline.transform.transformer;
 
 import io.github.douira.glsl_transformer.ast.node.Identifier;
+import io.github.douira.glsl_transformer.ast.node.declaration.FunctionParameter;
+import io.github.douira.glsl_transformer.ast.node.type.qualifier.PrecisionQualifier;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
@@ -31,6 +33,7 @@ import net.irisshaders.iris.vulkan.VulkanUniformLayout;
 import net.irisshaders.iris.vulkan.VulkanUnsupported;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -96,8 +99,19 @@ public class VulkanTransformer {
 			}
 
 			tree.getRoot().indexBuildSession(root -> {
+				// GL ignores precision on parameters; glslang wants every declaration of a function to agree.
+				root.process(root.nodeIndex.getStream(PrecisionQualifier.class)
+					.filter(precision -> precision.getAncestor(FunctionParameter.class) != null), PrecisionQualifier::detachAndDelete);
+
+				// Identifiers that are keywords only in Vulkan GLSL (Bliss names a sampler2D parameter "sampler").
+				for (String keyword : VULKAN_KEYWORDS) {
+					if (root.identifierIndex.has(keyword)) {
+						root.rename(keyword, "iris_vk_" + keyword);
+					}
+				}
+
 				if (!layout.isEmpty()) {
-					tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS, layout.toGlsl());
+					tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS, layout.toGlsl(ownGlobals(root, layout)));
 				}
 
 				root.rename("gl_VertexID", "gl_VertexIndex");
@@ -116,6 +130,26 @@ public class VulkanTransformer {
 				}
 			});
 		}
+	}
+
+	/** Type names Vulkan GLSL adds (GL_KHR_vulkan_glsl) that are ordinary identifiers in GL GLSL. */
+	private static final List<String> VULKAN_KEYWORDS = List.of("sampler", "samplerShadow", "subpassInput", "subpassInputMS");
+
+	/** Block members this stage declares itself as a global (the uniform declarations were removed already). */
+	private static Set<String> ownGlobals(Root root, VulkanUniformLayout layout) {
+		Set<String> names = new HashSet<>();
+
+		for (DeclarationExternalDeclaration external : root.nodeIndex.get(DeclarationExternalDeclaration.class)) {
+			if (external.getDeclaration() instanceof TypeAndInitDeclaration declaration && !isUniform(declaration.getType().getTypeQualifier())) {
+				for (DeclarationMember member : declaration.getMembers()) {
+					if (layout.get(member.getName().getName()) != null) {
+						names.add(member.getName().getName());
+					}
+				}
+			}
+		}
+
+		return names;
 	}
 
 	/** Whether a uniform sampler (or other opaque uniform) with this name is declared at the top level. */

@@ -225,7 +225,7 @@ public class ShaderPack {
 		List<String> invalidFeatureFlags = invalidFlagList.stream().map(FeatureFlags::getHumanReadableName).toList();
 
 		if (!invalidFeatureFlags.isEmpty()) {
-			if (Minecraft.getInstance().gui.screen() instanceof ShaderPackScreen) {
+			if (Minecraft.getInstance().gui != null && Minecraft.getInstance().gui.screen() instanceof ShaderPackScreen) {
 				MutableComponent component = Component.translatable("iris.unsupported.pack.description", FeatureFlags.getInvalidStatus(invalidFlagList), invalidFeatureFlags.stream()
 					.collect(Collectors.joining(", ", ": ", ".")));
 				if (SystemUtils.IS_OS_MAC) {

@@ -1,5 +1,6 @@
 package net.irisshaders.iris.pipeline.transform.transformer;
 
+import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.Identifier;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.declaration.FunctionDeclaration;
@@ -68,6 +69,16 @@ public class DepthTransformer {
 							 boolean shadow, boolean zZeroToOne, Set<String> textureOverrides) {
 		Set<String> depthSamplers = new HashSet<>(DEPTH_SAMPLERS);
 		depthSamplers.removeAll(textureOverrides);
+		// A pack can bind its own texture under a depth sampler's name (Photon: depthtex0 is a sampler3D LUT in
+		// its deferred programs); only 2D depth samplers hold depth.
+		for (DeclarationExternalDeclaration external : root.nodeIndex.get(DeclarationExternalDeclaration.class)) {
+			if (external.getDeclaration() instanceof TypeAndInitDeclaration declaration
+				&& declaration.getType().getTypeSpecifier() instanceof BuiltinFixedTypeSpecifier fixed
+				&& fixed.type != BuiltinFixedTypeSpecifier.BuiltinType.SAMPLER2D
+				&& fixed.type != BuiltinFixedTypeSpecifier.BuiltinType.SAMPLER2DSHADOW) {
+				declaration.getMembers().forEach(member -> depthSamplers.remove(member.getName().getName()));
+			}
+		}
 		invertDepthReads(t, tree, root, depthSamplers);
 		if (shadow && root.process(root.nodeIndex.getStream(FunctionDefinition.class)
 			.filter(definition -> definition.getFunctionPrototype().getName().getName().equals("iris_undoRevZ")),

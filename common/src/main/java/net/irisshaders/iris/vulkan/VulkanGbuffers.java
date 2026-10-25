@@ -181,7 +181,18 @@ public final class VulkanGbuffers {
 			ImmediateState.skipExtension.set(true);
 
 			try {
-				variant = shader != null ? compileProgram(source, vertexFormats, shader, target) : compileOriginal(source, vertexFormats, target);
+				if (shader != null) {
+					try {
+						variant = compileProgram(source, vertexFormats, shader, target);
+					} catch (RuntimeException e) {
+						// A pack program that doesn't build for Vulkan: draw with the game's shaders instead of crashing.
+						VulkanUnsupported.once("gbuffers program for " + source.getLocation() + " (drawn with the game's shaders): " + e.getMessage());
+						shader = null;
+						variant = compileOriginal(source, vertexFormats, target);
+					}
+				} else {
+					variant = compileOriginal(source, vertexFormats, target);
+				}
 			} finally {
 				ImmediateState.skipExtension.set(skip);
 			}

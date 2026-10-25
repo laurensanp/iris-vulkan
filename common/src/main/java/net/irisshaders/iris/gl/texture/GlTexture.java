@@ -8,6 +8,8 @@ import net.irisshaders.iris.gl.GlResource;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.sampler.GlSampler;
 import net.irisshaders.iris.shaderpack.texture.TextureFilteringData;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL13C;
 import org.lwjgl.opengl.GL20C;
@@ -23,7 +25,18 @@ public class GlTexture extends GlResource implements TextureAccess {
 	private final boolean shouldClamp;
 
 	public GlTexture(TextureType target, int sizeX, int sizeY, int sizeZ, int internalFormat, int format, int pixelType, byte[] pixels, TextureFilteringData filteringData) {
-		super(GlStateManager._genTexture());
+		super(IrisVulkan.isActive() ? 0 : GlStateManager._genTexture());
+		this.target = target;
+		this.shouldBlur = filteringData.shouldBlur();
+		this.shouldClamp = filteringData.shouldClamp();
+
+		if (IrisVulkan.isActive()) {
+			// Raw texture files (shaders.properties "texture.<stage>.<name> = file.dat TEXTURE_3D ...") need
+			// 1D/3D images and GL pixel layouts; id 0 makes the sampler read the unbound fallback.
+			VulkanUnsupported.once("raw custom textures (" + target + ")");
+			return;
+		}
+
 		IrisRenderSystem.bindTextureForSetup(target.getGlType(), getGlId());
 
 		TextureUploadHelper.resetTextureUploadState();
@@ -39,8 +52,6 @@ public class GlTexture extends GlResource implements TextureAccess {
 		IrisRenderSystem.texParameteri(texture, target.getGlType(), GL11C.GL_TEXTURE_MIN_FILTER, filteringData.shouldBlur() ? GL11C.GL_LINEAR : GL11C.GL_NEAREST);
 		IrisRenderSystem.texParameteri(texture, target.getGlType(), GL11C.GL_TEXTURE_MAG_FILTER, filteringData.shouldBlur() ? GL11C.GL_LINEAR : GL11C.GL_NEAREST);
 		IrisRenderSystem.texParameteri(texture, target.getGlType(), GL11C.GL_TEXTURE_WRAP_S, filteringData.shouldClamp() ? GL13C.GL_CLAMP_TO_EDGE : GL13C.GL_REPEAT);
-		this.shouldBlur = filteringData.shouldBlur();
-		this.shouldClamp = filteringData.shouldClamp();
 
 		if (sizeY > 0) {
 			IrisRenderSystem.texParameteri(texture, target.getGlType(), GL11C.GL_TEXTURE_WRAP_T, filteringData.shouldClamp() ? GL13C.GL_CLAMP_TO_EDGE : GL13C.GL_REPEAT);
@@ -56,8 +67,6 @@ public class GlTexture extends GlResource implements TextureAccess {
 		IrisRenderSystem.texParameterf(texture, target.getGlType(), GL20C.GL_TEXTURE_LOD_BIAS, 0.0F);
 
 		IrisRenderSystem.bindTextureForSetup(target.getGlType(), 0);
-
-		this.target = target;
 	}
 
 	public TextureType getTarget() {
@@ -97,6 +106,8 @@ public class GlTexture extends GlResource implements TextureAccess {
 
 	@Override
 	protected void destroyInternal() {
-		GlStateManager._deleteTexture(getGlId());
+		if (getGlId() != 0) {
+			GlStateManager._deleteTexture(getGlId());
+		}
 	}
 }

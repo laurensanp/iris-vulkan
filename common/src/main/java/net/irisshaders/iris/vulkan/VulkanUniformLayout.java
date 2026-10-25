@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
@@ -17,6 +18,7 @@ import java.util.regex.Pattern;
  */
 public final class VulkanUniformLayout {
 	public static final String BLOCK_NAME = "IrisUniforms";
+	private static final String HIDDEN_PREFIX = "iris_hidden_";
 	public static final VulkanUniformLayout EMPTY = new VulkanUniformLayout(List.of());
 
 	private static final Pattern BLOCK = Pattern.compile("uniform\\s+" + BLOCK_NAME + "\\s*\\{([^}]*)}");
@@ -80,7 +82,8 @@ public final class VulkanUniformLayout {
 
 			if (member.matches()) {
 				int array = member.group(3) != null ? Integer.parseInt(member.group(3)) : 0;
-				declarations.add(new Declaration(member.group(1), member.group(2), array));
+				String name = member.group(2).startsWith(HIDDEN_PREFIX) ? member.group(2).substring(HIDDEN_PREFIX.length()) : member.group(2);
+				declarations.add(new Declaration(member.group(1), name, array));
 			}
 		}
 
@@ -142,10 +145,19 @@ public final class VulkanUniformLayout {
 	}
 
 	public String toGlsl() {
+		return toGlsl(Set.of());
+	}
+
+	/**
+	 * The block, with the members in {@code hidden} under a placeholder name: a stage that declares its own
+	 * global with that name (Bliss: uniform sunVec in the fragment shader, a computed sunVec in the vertex
+	 * shader) keeps the block layout without the clash. {@link #parse} reads the original name back.
+	 */
+	public String toGlsl(Set<String> hidden) {
 		StringBuilder glsl = new StringBuilder("layout(std140) uniform ").append(BLOCK_NAME).append(" {\n");
 
 		for (Member member : members) {
-			glsl.append('\t').append(member.type).append(' ').append(member.name);
+			glsl.append('\t').append(member.type).append(' ').append(hidden.contains(member.name) ? HIDDEN_PREFIX + member.name : member.name);
 
 			if (member.arrayLength > 0) {
 				glsl.append('[').append(member.arrayLength).append(']');
