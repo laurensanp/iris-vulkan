@@ -13,6 +13,7 @@ import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
 import it.unimi.dsi.fastutil.Function;
 import it.unimi.dsi.fastutil.objects.Object2ObjectArrayMap;
 import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanGbuffers;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.mixinterface.GlRenderPipelineAccess;
 import net.irisshaders.iris.mixinterface.ShaderInstanceInterface;
@@ -68,8 +69,13 @@ public abstract class MixinShaderManager_Overrides {
 
 	@Inject(method = "getCompiledPipelineNullable", at = @At(value = "RETURN"), cancellable = true)
 	private static void redirectIrisProgram(RenderPipeline renderPipeline, CallbackInfoReturnable<CompiledRenderPipeline> cir) {
-		// Swaps in GL gbuffers programs; on Vulkan vanilla's pipelines draw the world until M2.
-		if (IrisVulkan.isActive()) return;
+		if (IrisVulkan.isActive()) {
+			// Vulkan swaps pipelines when they are set in a gbuffers render pass (VulkanGbuffers), where the
+			// attachments are known; it needs the original pipeline then.
+			VulkanGbuffers.remember(renderPipeline, cir.getReturnValue());
+			return;
+		}
+
 		if (renderPipeline == CompositeRenderer.COMPOSITE_PIPELINE) return;
 		if (renderPipeline == RenderPipelines.ANIMATE_SPRITE_BLIT || renderPipeline == RenderPipelines.ANIMATE_SPRITE_INTERPOLATE) return;
 

@@ -767,13 +767,8 @@ public class Iris {
 		return DHCompat.lastPackIncompatible();
 	}
 
-	/**
-	 * Whether the pack drives world rendering (extended vertex formats, gbuffers programs, reverse-Z undo).
-	 * On Vulkan the world is still drawn by vanilla's pipelines and only the pack's fullscreen passes run
-	 * (port milestone M1), so the world must be set up as without a pack.
-	 */
 	public static boolean isPackInUseQuick() {
-		return getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline && !IrisVulkan.isActive();
+		return getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline;
 	}
 
 	public static void loadShaderpackWhenPossible() {

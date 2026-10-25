@@ -32,6 +32,8 @@ import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
 import net.irisshaders.iris.vertices.ImmediateState;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.BindGroupLayouts;
 import net.minecraft.client.renderer.feature.ItemFeatureRenderer;
@@ -83,6 +85,8 @@ public class ExtendedShader extends GlProgram implements IrisProgram {
 	private int textureToUnswizzle;
 	private boolean isSetup;
 	private final IrisRenderingPipeline pipeline;
+	/** DRAWBUFFERS of the program: colortex index of each fragment output (Vulkan picks attachments with it). */
+	private int[] drawBuffers = new int[]{0};
 
 	public ExtendedShader(int programId, String string, VertexFormat vertexFormat, boolean usesTessellation,
                           GlFramebuffer writingToBeforeTranslucent, GlFramebuffer writingToAfterTranslucent,
@@ -139,13 +143,16 @@ public class ExtendedShader extends GlProgram implements IrisProgram {
             layouts.addAll(ShaderChunkRenderer.BIND_GROUP.uniforms());
         }
 
-		super.setupBindGroupLayouts(layouts);
+		if (!IrisVulkan.isActive()) {
+			// On Vulkan the program's blocks and samplers are bound by name (VulkanGbuffers).
+			super.setupBindGroupLayouts(layouts);
+		}
 
 
 		ProgramUniforms.Builder uniformBuilder = ProgramUniforms.builder(string, programId);
 		ProgramSamplers.Builder samplerBuilder = ProgramSamplers.builder(programId, IrisSamplers.WORLD_RESERVED_TEXTURE_UNITS);
 		uniformCreator.accept(uniformBuilder);
-		this.normalMat = GlStateManager._glGetUniformLocation(programId, "iris_NormalMat");
+		this.normalMat = IrisRenderSystem.getUniformLocation(programId, "iris_NormalMat");
 		ProgramImages.Builder builder = ProgramImages.builder(programId);
 		samplerCreator.accept(samplerBuilder, builder);
 		samplerBuilder.addDynamicSampler(TextureType.TEXTURE_2D,
@@ -165,8 +172,8 @@ public class ExtendedShader extends GlProgram implements IrisProgram {
 		this.alphaTest = alphaTest.reference();
 		this.parent = parent;
 
-		this.modelViewInverse = GlStateManager._glGetUniformLocation(programId, "iris_ModelViewMatInverse");
-		this.projectionInverse = GlStateManager._glGetUniformLocation(programId, "iris_ProjMatInverse");
+		this.modelViewInverse = IrisRenderSystem.getUniformLocation(programId, "iris_ModelViewMatInverse");
+		this.projectionInverse = IrisRenderSystem.getUniformLocation(programId, "iris_ProjMatInverse");
 
 		this.intensitySwizzle = shaderKey.isIntensity();
 	}
@@ -184,6 +191,23 @@ public class ExtendedShader extends GlProgram implements IrisProgram {
 			}
 		}
 		return pipeline.getWhitePixel().getTexture().iris$getGlId();
+	}
+
+	public void setDrawBuffers(int[] drawBuffers) {
+		this.drawBuffers = drawBuffers.clone();
+	}
+
+	public int[] getDrawBuffers() {
+		return drawBuffers;
+	}
+
+	@Nullable
+	public BlendModeOverride getBlendModeOverride() {
+		return blendModeOverride;
+	}
+
+	public List<BufferBlendOverride> getBufferBlendOverrides() {
+		return hasOverrides ? bufferBlendOverrides : List.of();
 	}
 
 	public boolean isIntensitySwizzle() {
@@ -210,7 +234,13 @@ public class ExtendedShader extends GlProgram implements IrisProgram {
 		DepthColorStorage.unlockDepthColor();
 
 		CapturedRenderingState.INSTANCE.setCurrentAlphaTest(alphaTest);
-		GlStateManager._glUseProgram(getProgramId());
+
+		if (IrisVulkan.isActive()) {
+			// Uniform writes below go to the program's block; VulkanGbuffers binds it to the pass.
+			VulkanProgram.use(getProgramId());
+		} else {
+			GlStateManager._glUseProgram(getProgramId());
+		}
 
 		if (modelViewInverse > -1) {
 			IrisRenderSystem.uniformMatrix4fv(modelViewInverse, false, RenderSystem.getModelViewMatrixCopy().invert(tempMatrix4f).get(tempFloats));

@@ -9,6 +9,14 @@ public class BufferBlendOverride {
 		this.blendMode = blendMode;
 	}
 
+	public int drawBuffer() {
+		return drawBuffer;
+	}
+
+	public BlendMode blendMode() {
+		return blendMode;
+	}
+
 	public void apply() {
 		BlendModeStorage.overrideBufferBlend(this.drawBuffer, this.blendMode);
 	}

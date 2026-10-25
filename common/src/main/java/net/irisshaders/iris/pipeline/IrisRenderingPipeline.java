@@ -13,7 +13,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
-import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
+import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.features.FeatureFlags;
 import net.irisshaders.iris.gl.GLDebug;
@@ -93,8 +93,7 @@ import net.irisshaders.iris.targets.ClearPassCreator;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.targets.backed.NativeImageBackedSingleColorTexture;
 import net.irisshaders.iris.vulkan.IrisVulkan;
-import net.irisshaders.iris.vulkan.VulkanDraw;
-import net.irisshaders.iris.vulkan.VulkanTextures;
+import net.irisshaders.iris.vulkan.VulkanGbuffers;
 import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.irisshaders.iris.uniforms.CommonUniforms;
@@ -116,7 +115,10 @@ import org.joml.Vector4f;
 import org.lwjgl.opengl.*;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
+import java.util.TreeSet;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -183,6 +185,11 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	private final boolean skipAllRendering;
 	private final CloudSetting dhCloudSetting;
 	public boolean isBeforeTranslucent;
+	/** Vulkan gbuffers: union of all gbuffers programs' DRAWBUFFERS (see getVulkanGbufferBuffers). */
+	private final TreeSet<Integer> vulkanGbufferBuffers = new TreeSet<>();
+	private int[] vulkanGbufferBufferArray;
+	private GlFramebuffer vulkanGbuffersBeforeTranslucent;
+	private GlFramebuffer vulkanGbuffersAfterTranslucent;
 	private boolean initializedBlockIds;
 	private ShaderStorageBufferHolder shaderStorageBufferHolder;
 	private ShadowRenderTargets shadowRenderTargets;
@@ -234,8 +241,7 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		this.occlusionCulling = programSet.getPackDirectives().shouldUseOcclusionCulling();
 		this.resolver = new ProgramFallbackResolver(programSet);
 		this.pack = programSet.getPack();
-        // On Vulkan Sodium still draws terrain with its own shaders (M1), which read the compact format.
-        WorldRenderingSettings.INSTANCE.setVertexFormat(IrisVulkan.isActive() ? ChunkMeshFormats.COMPACT :
+        WorldRenderingSettings.INSTANCE.setVertexFormat(
                 FormatAnalyzer.createFormat(true, true, true, true)); // TODO 26.2... or never.
 
 		RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -420,9 +426,9 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 
 		ShaderLoadingMap loadingMap = new ShaderLoadingMap((key, patchType) -> {
-			if (IrisVulkan.isActive()) {
-				// gbuffers/shadow programs replace vanilla's GL programs; on Vulkan the world is still
-				// drawn by vanilla's pipelines until the gbuffers port (M2).
+			if (IrisVulkan.isActive() && key.isShadow()) {
+				// Shadow programs come with the shadow pass (M3).
+				VulkanUnsupported.once("shadow pass programs");
 				return null;
 			}
 
@@ -439,6 +445,12 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 				destroyShaders();
 				throw new RuntimeException(e);
 			} catch (RuntimeException e) {
+				if (IrisVulkan.isActive()) {
+					// Keep the rest of the pack running while porting: this draw keeps its original shaders.
+					Iris.logger.error("Vulkan: gbuffers program " + key.getProgram() + " for " + key + " failed, drawing it with the original shaders", e);
+					return null;
+				}
+
 				destroyShaders();
 				throw e;
 			}
@@ -462,15 +474,6 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		WorldRenderingSettings.INSTANCE.setBreaksAnisotropy(programSet.getPackDirectives().breaksAnisotropy());
 		WorldRenderingSettings.INSTANCE.setVoxelizeLightBlocks(programSet.getPackDirectives().shouldVoxelizeLightBlocks());
 		WorldRenderingSettings.INSTANCE.setSeparateEntityDraws(programSet.getPackDirectives().shouldUseSeparateEntityDraws());
-
-		if (IrisVulkan.isActive()) {
-			// Vanilla/Sodium shaders still draw the world on Vulkan (M1): bake meshes as without a pack.
-			WorldRenderingSettings.INSTANCE.setAmbientOcclusionLevel(1.0f);
-			WorldRenderingSettings.INSTANCE.setDisableDirectionalShading(false);
-			WorldRenderingSettings.INSTANCE.setUseSeparateAo(false);
-			WorldRenderingSettings.INSTANCE.setVoxelizeLightBlocks(false);
-			WorldRenderingSettings.INSTANCE.setSeparateEntityDraws(false);
-		}
 
 		if (shadowRenderTargets != null) {
 			GlProgram shader = shaderMap.getShader(ShaderKey.SHADOW_TERRAIN_CUTOUT);
@@ -716,6 +719,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		GlFramebuffer afterTranslucent = renderTargets.createGbufferFramebuffer(flippedAfterTranslucent, source.getDirectives().getDrawBuffers());
 		boolean isLines = programId == ProgramId.Line && resolver.has(ProgramId.Line);
 
+		for (int buffer : source.getDirectives().getDrawBuffers()) {
+			vulkanGbufferBuffers.add(buffer);
+		}
+
 
 		ShaderAttributeInputs inputs = new ShaderAttributeInputs(vertexFormat, isFullbright, isLines, isGlint, isText, isIE);
 
@@ -730,6 +737,11 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	}
 
 	private ShaderSupplier createFallbackShader(String name, ShaderKey key) throws IOException {
+		if (IrisVulkan.isActive()) {
+			// Iris' synthesized fallback programs are plain GL GLSL; on Vulkan the draw keeps its original shaders.
+			return null;
+		}
+
 		GlFramebuffer beforeTranslucent = renderTargets.createGbufferFramebuffer(flippedAfterPrepare, new int[]{0});
 		GlFramebuffer afterTranslucent = renderTargets.createGbufferFramebuffer(flippedAfterTranslucent, new int[]{0});
 
@@ -1059,7 +1071,9 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 	@Override
 	public void renderShadows(LevelRendererAccessor worldRenderer, Camera playerCamera, CameraRenderState renderState) {
-		if (shadowRenderer != null) {
+		if (shadowRenderer != null && IrisVulkan.isActive()) {
+			VulkanUnsupported.once("shadow pass");
+		} else if (shadowRenderer != null) {
 			this.shadowRenderer.renderShadows(worldRenderer, playerCamera, renderState);
 		}
 
@@ -1103,10 +1117,6 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		// all non-translucent content, as required.
 		renderTargets.copyPreTranslucentDepth();
 
-		if (IrisVulkan.isActive()) {
-			copyMainColorIntoColortex0(flippedAfterPrepare);
-		}
-
 		deferredRenderer.renderAll();
 
 		// note: we are careful not to touch the lightmap texture unit or overlay color texture unit here,
@@ -1126,37 +1136,45 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		isRenderingWorld = false;
 		removePhaseIfNeeded();
 
-		if (IrisVulkan.isActive()) {
-			copyMainColorIntoColortex0(flippedAfterTranslucent);
-		}
-
 		compositeRenderer.renderAll();
 		finalPassRenderer.renderFinalPass();
 	}
 
 	/**
-	 * M1 on Vulkan: vanilla still draws the world into the main target instead of the pack's gbuffers
-	 * writing colortex0, so hand the frame to the deferred/composite passes by copying it into the
-	 * colortex0 buffer they read next (main or alt, depending on the flips so far).
+	 * Vulkan: the colortex buffers world render passes write (see VulkanGbuffers), the ones any gbuffers
+	 * program writes, in buffer order. A render pass has them all attached; each program writes its own.
 	 */
-	private void copyMainColorIntoColortex0(ImmutableSet<Integer> flipped) {
-		GpuTexture source = Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTexture();
-		net.irisshaders.iris.targets.RenderTarget colortex0 = renderTargets.getOrCreate(0);
-		GpuTexture target = VulkanTextures.texture(flipped.contains(0) ? colortex0.getAltTexture() : colortex0.getMainTexture());
+	public int[] getVulkanGbufferBuffers() {
+		if (vulkanGbufferBufferArray == null) {
+			int max = RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments();
+			int[] buffers = vulkanGbufferBuffers.isEmpty() ? new int[]{0} : vulkanGbufferBuffers.stream().mapToInt(Integer::intValue).toArray();
 
-		if (source == null || target == null) {
-			return;
+			if (buffers.length > max) {
+				VulkanUnsupported.once("gbuffers writing more than " + max + " colortex buffers in total (" + Arrays.toString(buffers) + ")");
+				buffers = Arrays.copyOf(buffers, max);
+			}
+
+			vulkanGbufferBufferArray = buffers;
 		}
 
-		if (source.getFormat() != target.getFormat()) {
-			// e.g. Solas keeps colortex0 in R11G11B10F: convert through a shader.
-			VulkanDraw.blit(source, target);
-			return;
+		return vulkanGbufferBufferArray;
+	}
+
+	/** Vulkan: views of {@link #getVulkanGbufferBuffers()} for the current phase (before / after translucents). */
+	public List<GpuTextureView> getVulkanGbufferViews() {
+		if (isBeforeTranslucent) {
+			if (vulkanGbuffersBeforeTranslucent == null) {
+				vulkanGbuffersBeforeTranslucent = renderTargets.createGbufferFramebuffer(flippedAfterPrepare, getVulkanGbufferBuffers());
+			}
+
+			return vulkanGbuffersBeforeTranslucent.vulkanColorViews();
 		}
 
-		int width = Math.min(source.getWidth(0), target.getWidth(0));
-		int height = Math.min(source.getHeight(0), target.getHeight(0));
-		RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(source, target, 0, 0, 0, 0, 0, width, height);
+		if (vulkanGbuffersAfterTranslucent == null) {
+			vulkanGbuffersAfterTranslucent = renderTargets.createGbufferFramebuffer(flippedAfterTranslucent, getVulkanGbufferBuffers());
+		}
+
+		return vulkanGbuffersAfterTranslucent.vulkanColorViews();
 	}
 
 	@Override
@@ -1271,6 +1289,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		destroyed = true;
 
 		destroyShaders();
+
+		if (IrisVulkan.isActive()) {
+			VulkanGbuffers.clear();
+		}
 
 		// Unbind all textures
 		//

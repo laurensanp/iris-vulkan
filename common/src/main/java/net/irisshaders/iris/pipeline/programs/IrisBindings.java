@@ -1,6 +1,7 @@
 package net.irisshaders.iris.pipeline.programs;
 
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL31C;
 
@@ -25,6 +26,11 @@ public final class IrisBindings {
 	}
 
 	public static void apply(int program) {
+		if (IrisVulkan.isActive()) {
+			// RenderPearl binds blocks and samplers by name; VulkanTransformer gives them vanilla's names.
+			return;
+		}
+
 		if (GL20C.glGetProgrami(program, GL20C.GL_LINK_STATUS) == GL20C.GL_FALSE) {
 			return;
 		}

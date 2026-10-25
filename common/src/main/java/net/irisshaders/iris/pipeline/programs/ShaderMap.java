@@ -4,6 +4,7 @@ import com.mojang.renderpearl.backend.opengl.GlProgram;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import it.unimi.dsi.fastutil.objects.Object2BooleanFunction;
 import net.irisshaders.iris.gl.shader.ShaderCompileException;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.GL46C;
 
 import java.util.function.Consumer;
@@ -38,6 +39,10 @@ public class ShaderMap {
 	}
 
 	private void checkLinkingState(ShaderKey key, ShaderSupplier shader) {
+		if (IrisVulkan.isActive()) {
+			return;
+		}
+
 		int i = shader.id().program();
 
 		int j = GlStateManager.glGetProgrami(i, 35714);

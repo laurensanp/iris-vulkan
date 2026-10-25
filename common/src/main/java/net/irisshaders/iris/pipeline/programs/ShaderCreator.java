@@ -34,6 +34,8 @@ import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
 import net.irisshaders.iris.uniforms.VanillaUniforms;
 import net.irisshaders.iris.uniforms.builtin.BuiltinReplacementUniforms;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -167,7 +169,7 @@ public class ShaderCreator {
         VertexFormat finalVertexFormat = vertexFormat;
         return new ShaderSupplier(shaderKey, id, () -> {
 			try {
-				return new ExtendedShader(id.getFinally(), name, finalVertexFormat, tessControl != null || tessEval != null, writingToBeforeTranslucent, writingToAfterTranslucent, blendModeOverride, alpha, uniforms -> {
+				ExtendedShader shader = new ExtendedShader(id.getFinally(), name, finalVertexFormat, tessControl != null || tessEval != null, writingToBeforeTranslucent, writingToAfterTranslucent, blendModeOverride, alpha, uniforms -> {
 					CommonUniforms.addDynamicUniforms(uniforms, FogMode.PER_VERTEX);
 					customUniforms.assignTo(uniforms);
 					BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniforms);
@@ -175,6 +177,8 @@ public class ShaderCreator {
 				}, (samplerHolder, imageHolder) -> {
 					parent.addGbufferOrShadowSamplers(samplerHolder, imageHolder, flipped, isShadowPass, inputs.hasTex(), inputs.hasLight(), inputs.hasOverlay());
 				}, shaderKey, parent, overrides, customUniforms, patch);
+				shader.setDrawBuffers(source.getDirectives().getDrawBuffers());
+				return shader;
 			} catch (IOException e) {
 				throw new RuntimeException(e);
 			}
@@ -184,6 +188,16 @@ public class ShaderCreator {
 
 
 	public static PartialShader link(String name, String vertex, String geometry, String tessControl, String tessEval, String fragment, VertexFormat vertexFormat, boolean isFallback) throws ShaderCompileException {
+		if (IrisVulkan.isActive()) {
+			if (tessControl != null || tessEval != null) {
+				// RenderPearl has vertex and fragment stages only; tessellation needs the native layer (M3).
+				throw new ShaderCompileException(name, "tessellation shaders are not supported on Vulkan yet");
+			}
+
+			// Vertex attributes are matched by name when the pipeline is built (VulkanProgram.compileGbuffer).
+			return new PartialShader(VulkanProgram.create(name, vertex, geometry, fragment), -1, -1, -1, -1, -1);
+		}
+
 		int i = GlStateManager.glCreateProgram();
 		if (i <= 0) {
 			throw new RuntimeException("Could not create shader program (returned program ID " + i + ")");

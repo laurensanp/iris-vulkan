@@ -23,6 +23,7 @@ import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.ASTParser;
 import io.github.douira.glsl_transformer.util.Type;
 import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.pipeline.transform.Patch;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.parameter.Parameters;
 import net.irisshaders.iris.vulkan.VulkanUniformLayout;
@@ -44,6 +45,25 @@ import java.util.stream.Stream;
  * Varying locations are done before this by {@link LayoutTransformer}.
  */
 public class VulkanTransformer {
+	/**
+	 * gbuffers programs read vanilla's uniform blocks and samplers. GL Iris finds them under its own
+	 * names (IrisBindings); RenderPearl binds by name, so on Vulkan they get vanilla's names.
+	 */
+	private static final Map<String, String> VANILLA_BINDINGS = Map.of(
+		"iris_DynamicTransforms", "DynamicTransforms",
+		"iris_Projection", "Projection",
+		"iris_Globals", "Globals",
+		"iris_Fog", "Fog",
+		"iris_CloudInfo", "CloudInfo",
+		"iris_Lighting", "Lighting",
+		"gtexture", "Sampler0",
+		"iris_overlay", "Sampler1",
+		"lightmap", "Sampler2");
+	/** The same for Sodium's terrain pipelines (u_Globals already has Sodium's name). */
+	private static final Map<String, String> SODIUM_BINDINGS = Map.of(
+		"gtexture", "u_BlockTex",
+		"lightmap", "u_LightTex");
+
 	public static void transformGrouped(ASTParser t, Map<PatchShaderType, TranslationUnit> trees, Parameters parameters) {
 		Map<String, VulkanUniformLayout.Declaration> uniforms = new LinkedHashMap<>();
 
@@ -81,6 +101,12 @@ public class VulkanTransformer {
 
 				root.rename("gl_VertexID", "gl_VertexIndex");
 				root.rename("gl_InstanceID", "gl_InstanceIndex");
+
+				if (parameters.patch == Patch.VANILLA) {
+					VANILLA_BINDINGS.forEach(root::rename);
+				} else if (parameters.patch == Patch.SODIUM) {
+					SODIUM_BINDINGS.forEach(root::rename);
+				}
 			});
 		}
 	}

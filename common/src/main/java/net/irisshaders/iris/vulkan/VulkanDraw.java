@@ -126,9 +126,11 @@ public final class VulkanDraw {
 		VulkanUnits.bindSampler(0, previousSampler);
 	}
 
-	private static Optional<BlendFunction> toBlendFunction(@Nullable BlendModeOverride override) {
-		BlendMode mode = override == null ? null : override.getBlendMode();
+	public static Optional<BlendFunction> toBlendFunction(@Nullable BlendModeOverride override) {
+		return toBlendFunction(override == null ? null : override.getBlendMode());
+	}
 
+	public static Optional<BlendFunction> toBlendFunction(@Nullable BlendMode mode) {
 		if (mode == null) {
 			return Optional.empty();
 		}
