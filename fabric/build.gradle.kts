@@ -128,11 +128,15 @@ loom {
             // -PdlssBenchmark cycles Iris DLSS' modes once in the world and logs fps; -PwindowSize=1920x1080.
             if (project.hasProperty("dlssBenchmark")) {
                 vmArg("-Diris-dlss.benchmark=true")
-                vmArg("-Diris.vulkanTest.captureTicks=2600")
+                vmArg("-Diris.vulkanTest.captureTicks=3400")
             }
             // -PdlssForeignAcquire: the game's swapchain image is acquired outside VulkanGpuSurface, like Lunar Client does.
             if (project.hasProperty("dlssForeignAcquire")) {
                 vmArg("-Diris-dlss.debugForeignAcquire=true")
+            }
+            // -PjfrProfile records a Java Flight Recording to run/profile.jfr (jfr print --events jdk.ExecutionSample).
+            if (project.hasProperty("jfrProfile")) {
+                vmArg("-XX:StartFlightRecording=filename=" + file("run/profile.jfr").absolutePath + ",settings=profile")
             }
             if (project.hasProperty("windowSize")) {
                 val size = project.property("windowSize").toString().split("x")
