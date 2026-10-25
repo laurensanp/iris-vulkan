@@ -2,6 +2,8 @@ package net.irisshaders.iris.mixin.vulkan;
 
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
+import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.frontend.FrontendRenderPass;
 import net.irisshaders.iris.vulkan.VulkanGbufferPass;
 import net.irisshaders.iris.vulkan.VulkanGbuffers;
@@ -39,10 +41,22 @@ public class MixinFrontendRenderPass_Gbuffers implements VulkanGbufferPass {
 		return iris$gbufferTarget == null ? pipeline : VulkanGbuffers.adapt(pipeline, iris$gbufferTarget);
 	}
 
+	@Unique
+	@Nullable
+	private CompiledRenderPipeline iris$pipeline;
+
 	@Inject(method = "setPipeline", at = @At("RETURN"))
 	private void iris$bindProgramResources(CompiledRenderPipeline pipeline, CallbackInfo ci) {
 		if (iris$gbufferTarget != null) {
+			iris$pipeline = pipeline;
 			VulkanGbuffers.afterSetPipeline((RenderPass) (Object) this, pipeline, new HashSet<>(uniforms.keySet()));
+		}
+	}
+
+	@Inject(method = "setUniform(Ljava/lang/String;Lcom/mojang/renderpearl/api/textures/GpuTextureView;Lcom/mojang/renderpearl/api/textures/GpuSampler;)V", at = @At("RETURN"))
+	private void iris$albedoBound(String name, GpuTextureView view, GpuSampler sampler, CallbackInfo ci) {
+		if (iris$gbufferTarget != null && view != null && (name.equals("Sampler0") || name.equals("u_BlockTex"))) {
+			VulkanGbuffers.afterAlbedoBound((RenderPass) (Object) this, iris$pipeline);
 		}
 	}
 }

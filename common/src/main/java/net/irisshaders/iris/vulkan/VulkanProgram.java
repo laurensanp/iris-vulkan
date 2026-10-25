@@ -292,11 +292,7 @@ public final class VulkanProgram {
 	 * For pipelines from {@link #compileGbuffer}.
 	 */
 	public void bindResources(RenderPass pass, Set<String> external) {
-		if (!layout.isEmpty() && liveBindings.contains(VulkanUniformLayout.BLOCK_NAME)) {
-			GpuBufferSlice slice = RenderSystem.getDevice().createCommandEncoder().transientMemory()
-				.uploadStaging(uniforms.duplicate().clear().limit(layout.size()), UNIFORM_ALIGNMENT, GpuBuffer.USAGE_UNIFORM);
-			pass.setUniform(VulkanUniformLayout.BLOCK_NAME, slice);
-		}
+		bindUniformBlock(pass);
 
 		for (int i = 0; i < samplers.size(); i++) {
 			String sampler = samplers.get(i);
@@ -317,6 +313,15 @@ public final class VulkanProgram {
 			}
 
 			pass.setUniform(sampler, view, VulkanSamplers.get(VulkanUnits.sampler(unit)));
+		}
+	}
+
+	/** Uploads the current uniform values and binds them as the uniform block. */
+	public void bindUniformBlock(RenderPass pass) {
+		if (!layout.isEmpty() && liveBindings.contains(VulkanUniformLayout.BLOCK_NAME)) {
+			GpuBufferSlice slice = RenderSystem.getDevice().createCommandEncoder().transientMemory()
+				.uploadStaging(uniforms.duplicate().clear().limit(layout.size()), UNIFORM_ALIGNMENT, GpuBuffer.USAGE_UNIFORM);
+			pass.setUniform(VulkanUniformLayout.BLOCK_NAME, slice);
 		}
 	}
 
@@ -368,7 +373,15 @@ public final class VulkanProgram {
 			renamedFormats.add(VulkanPipelines.renamed(format, names));
 		}
 
-		String variantVertex = narrowInputs(stubInputs(vertex, input -> !matchedInputs.contains(input)), narrowedInputs);
+		Set<String> stubbed = new HashSet<>();
+		String variantVertex = narrowInputs(stubInputs(vertex, input -> {
+			boolean unmatched = !matchedInputs.contains(input);
+			if (unmatched) stubbed.add(input);
+			return unmatched;
+		}), narrowedInputs);
+		if (!stubbed.isEmpty()) {
+			Iris.logger.info("Vulkan gbuffers: {} drawing {} has no vertex data for {} (formats {})", name, original.getLocation(), stubbed, vertexFormats);
+		}
 		String variantFragment = remapOutputs(fragment, outputLocations);
 		Identifier variantLocation = Identifier.fromNamespaceAndPath(location.getNamespace(), location.getPath() + "/gbuffer_" + nextVariant++);
 

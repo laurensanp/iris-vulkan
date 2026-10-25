@@ -63,6 +63,8 @@ public final class VulkanGbuffers {
 
 	@Nullable
 	private static Target pending;
+	/** Albedo texture (GL id) of the last uniform upload for a pack program. */
+	private static int uploadedAlbedo;
 
 	private VulkanGbuffers() {
 	}
@@ -205,6 +207,7 @@ public final class VulkanGbuffers {
 		shader.iris$setupState(null);
 		program.bindResources(pass, VANILLA_SAMPLERS);
 		shader.iris$clearState();
+		uploadedAlbedo = currentAlbedo();
 
 		if (Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline) {
 			GpuTextureView white = pipeline.getWhitePixel().getTextureView();
@@ -221,6 +224,29 @@ public final class VulkanGbuffers {
 		if (readsVanillaGlobals && (!boundUniforms.contains("Projection") || !boundUniforms.contains("Fog") || !boundUniforms.contains("Globals"))) {
 			RenderSystem.bindDefaultUniforms(pass);
 		}
+	}
+
+	/**
+	 * RenderPass.setUniform of Sampler0 / u_BlockTex after setPipeline (Sodium binds the block atlas only
+	 * then): uniforms derived from the albedo texture (atlasSize, gtextureSize...) were uploaded for the
+	 * previous one, upload them again. GL Iris uploads right before the draw, so it never sees the old one.
+	 */
+	public static void afterAlbedoBound(RenderPass pass, @Nullable CompiledRenderPipeline compiled) {
+		Variant variant = compiled == null ? null : VARIANTS.get(compiled);
+
+		if (variant == null || variant.shader() == null || currentAlbedo() == uploadedAlbedo) {
+			return;
+		}
+
+		ExtendedShader shader = variant.shader();
+		shader.iris$setupState(null);
+		VulkanProgram.get(shader.getProgramId()).bindUniformBlock(pass);
+		shader.iris$clearState();
+		uploadedAlbedo = currentAlbedo();
+	}
+
+	private static int currentAlbedo() {
+		return Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline ? pipeline.getAlbedoTex() : 0;
 	}
 
 	private static CompiledRenderPipeline compileProgram(RenderPipeline source, List<VertexFormat> vertexFormats, ExtendedShader shader, Target target) {
