@@ -128,7 +128,7 @@ loom {
             // -PdlssBenchmark cycles Iris DLSS' modes once in the world and logs fps; -PwindowSize=1920x1080.
             if (project.hasProperty("dlssBenchmark")) {
                 vmArg("-Diris-dlss.benchmark=true")
-                vmArg("-Diris.vulkanTest.captureTicks=3400")
+                vmArg("-Diris.vulkanTest.captureTicks=4000")
             }
             // -PdlssForeignAcquire: the game's swapchain image is acquired outside VulkanGpuSurface, like Lunar Client does.
             if (project.hasProperty("dlssForeignAcquire")) {
