@@ -4,6 +4,8 @@ import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import net.minecraft.client.Minecraft;
 import org.joml.Vector4f;
 
@@ -26,6 +28,17 @@ public class ClearPass {
 	}
 
 	public void execute(Vector4f defaultClearColor) {
+		if (IrisVulkan.isActive()) {
+			// Clear passes only clear colour buffers (depth is the game's own); clear each attachment whole.
+			Vector4f clearColor = this.color != null ? this.color : Objects.requireNonNull(defaultClearColor);
+
+			for (GpuTextureView view : framebuffer.vulkanColorViews()) {
+				RenderSystem.getDevice().createCommandEncoder().clearColorTexture(view.texture(), clearColor);
+			}
+
+			return;
+		}
+
 		GlStateManager._viewport(0, 0, viewportX.getAsInt(), viewportY.getAsInt());
 		framebuffer.bind();
 

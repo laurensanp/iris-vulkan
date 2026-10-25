@@ -3,6 +3,7 @@ package net.irisshaders.iris.mixin;
 import com.google.common.base.Splitter;
 import com.google.common.io.Files;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
+import net.irisshaders.iris.vulkan.VulkanGlGuardTransformer;
 import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
@@ -56,6 +57,33 @@ public class IrisMixinPlugin implements IMixinConfigPlugin {
                 usingVulkan = false;
             }
         }
+
+        if (!usingVulkan && irisDlssForcesVulkan()) {
+            usingVulkan = true;
+        }
+    }
+
+    /**
+     * Iris DLSS starts the game on Vulkan whatever preferredGraphicsBackend says, unless DLSS is
+     * turned off in its config. Mixins are chosen before it runs, so read the same setting here.
+     */
+    private static boolean irisDlssForcesVulkan() {
+        if (!IrisPlatformHelpers.getInstance().isModLoaded("iris-dlss")) {
+            return false;
+        }
+
+        Properties properties = new Properties();
+        java.nio.file.Path config = IrisPlatformHelpers.getInstance().getConfigDir().resolve("iris-dlss.properties");
+
+        if (java.nio.file.Files.exists(config)) {
+            try (BufferedReader configReader = java.nio.file.Files.newBufferedReader(config, StandardCharsets.UTF_8)) {
+                properties.load(configReader);
+            } catch (java.io.IOException e) {
+                return true;
+            }
+        }
+
+        return Boolean.parseBoolean(properties.getProperty("enabled", "true"));
     }
 	@Override
 	public void onLoad(String mixinPackage) {
@@ -69,8 +97,9 @@ public class IrisMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
-        if (mixinClassName.contains("VKOnly")) return usingVulkan;
-		return !usingVulkan;
+		// The Vulkan port runs the whole of Iris on both backends; the VKOnly placeholder (a screen
+		// asking to switch to OpenGL) is not needed any more.
+		return !mixinClassName.contains("VKOnly");
 	}
 
 	@Override
@@ -92,6 +121,8 @@ public class IrisMixinPlugin implements IMixinConfigPlugin {
 
 	@Override
 	public void postApply(String targetClassName, ClassNode targetClass, String mixinClassName, IMixinInfo mixinInfo) {
-
+		if (usingVulkan && targetClassName.equals(VulkanGlGuardTransformer.TARGET)) {
+			VulkanGlGuardTransformer.transform(targetClass);
+		}
 	}
 }

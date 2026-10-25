@@ -15,6 +15,7 @@ import net.irisshaders.iris.gl.texture.TextureAccess;
 import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
 import net.irisshaders.iris.shaderpack.properties.PackRenderTargetDirectives;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.GL20C;
 
 import java.util.ArrayList;
@@ -64,10 +65,19 @@ public class ProgramSamplers {
 
 		if (initializer != null) {
 			for (GlUniform1iCall call : initializer) {
-				GlStateManager._glUniform1i(call.location(), call.value());
+				IrisRenderSystem.uniform1i(call.location(), call.value());
 			}
 
 			initializer = null;
+		}
+
+		if (IrisVulkan.isActive()) {
+			// Units are plain tables on Vulkan; there is no active texture to keep intact.
+			for (SamplerBinding samplerBinding : samplerBindings) {
+				samplerBinding.update();
+			}
+
+			return;
 		}
 
 		// We need to keep the active texture intact, since if we mess it up
@@ -133,7 +143,7 @@ public class ProgramSamplers {
 			}
 
 			for (String name : names) {
-				int location = GlStateManager._glGetUniformLocation(program, name);
+				int location = IrisRenderSystem.getUniformLocation(program, name);
 
 				if (location == -1) {
 					// There's no active sampler with this particular name in the program.
@@ -148,7 +158,7 @@ public class ProgramSamplers {
 
 		@Override
 		public boolean hasSampler(String name) {
-			return GlStateManager._glGetUniformLocation(program, name) != -1;
+			return IrisRenderSystem.getUniformLocation(program, name) != -1;
 		}
 
 		@Override
@@ -187,7 +197,7 @@ public class ProgramSamplers {
 			}
 
 			for (String name : names) {
-				int location = GlStateManager._glGetUniformLocation(program, name);
+				int location = IrisRenderSystem.getUniformLocation(program, name);
 
 				if (location == -1) {
 					// There's no active sampler with this particular name in the program.

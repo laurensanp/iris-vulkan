@@ -1,5 +1,6 @@
 package net.irisshaders.iris.uniforms.custom.cached;
 
+import net.irisshaders.iris.gl.IrisRenderSystem;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import kroppeb.stareval.function.FunctionReturn;
@@ -28,7 +29,7 @@ public class IntCachedUniform extends CachedUniform {
 
 	@Override
 	public void push(int location) {
-		GlStateManager._glUniform1i(location, this.cached);
+		IrisRenderSystem.uniform1i(location, this.cached);
 	}
 
 	@Override

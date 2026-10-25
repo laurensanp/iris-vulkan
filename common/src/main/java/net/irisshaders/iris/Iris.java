@@ -14,6 +14,7 @@ import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.buffer.ShaderStorageBufferHolder;
 import net.irisshaders.iris.gl.shader.ShaderCompileException;
 import net.irisshaders.iris.gl.shader.StandardMacros;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import net.irisshaders.iris.gui.debug.DebugLoadFailedGridScreen;
 import net.irisshaders.iris.gui.screen.ShaderPackScreen;
 import net.irisshaders.iris.helpers.OptionalBoolean;
@@ -132,7 +133,9 @@ public class Iris {
 			return;
 		}
 
-		if (GL.getCapabilities().GL_KHR_parallel_shader_compile) {
+		if (IrisVulkan.isActive()) {
+			// RenderPearl compiles pipelines on its own executor.
+		} else if (GL.getCapabilities().GL_KHR_parallel_shader_compile) {
 			KHRParallelShaderCompile.glMaxShaderCompilerThreadsKHR(10);
 		} else if (GL.getCapabilities().GL_ARB_parallel_shader_compile) {
 			ARBParallelShaderCompile.glMaxShaderCompilerThreadsARB(10);
@@ -425,7 +428,10 @@ public class Iris {
 		}
 
 		int success;
-		if (enable) {
+		if (IrisVulkan.isActive()) {
+			// GL debug output does not exist on Vulkan; validation layers are RenderPearl's business.
+			success = enable ? 0 : 1;
+		} else if (enable) {
 			success = GLDebug.setupDebugMessageCallback();
 		} else {
 			GLDebug.reloadDebugState();
@@ -761,8 +767,13 @@ public class Iris {
 		return DHCompat.lastPackIncompatible();
 	}
 
+	/**
+	 * Whether the pack drives world rendering (extended vertex formats, gbuffers programs, reverse-Z undo).
+	 * On Vulkan the world is still drawn by vanilla's pipelines and only the pack's fullscreen passes run
+	 * (port milestone M1), so the world must be set up as without a pack.
+	 */
 	public static boolean isPackInUseQuick() {
-		return getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline;
+		return getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline && !IrisVulkan.isActive();
 	}
 
 	public static void loadShaderpackWhenPossible() {

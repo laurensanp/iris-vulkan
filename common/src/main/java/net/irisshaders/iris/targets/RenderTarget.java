@@ -1,5 +1,6 @@
 package net.irisshaders.iris.targets;
 
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import net.irisshaders.iris.gl.GLDebug;
 import net.irisshaders.iris.gl.IrisRenderSystem;
@@ -7,6 +8,9 @@ import net.irisshaders.iris.gl.sampler.GlSampler;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.gl.texture.PixelFormat;
 import net.irisshaders.iris.gl.texture.PixelType;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanFormats;
+import net.irisshaders.iris.vulkan.VulkanTextures;
 import org.joml.Vector2i;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL13C;
@@ -16,6 +20,9 @@ import java.nio.ByteBuffer;
 
 public class RenderTarget {
 	private static final ByteBuffer NULL_BUFFER = null;
+	// Written by passes, sampled by later passes, copied for the depth/pre-translucent copies.
+	private static final int VULKAN_USAGE = GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_TEXTURE_BINDING
+		| GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST;
 	private final InternalTextureFormat internalFormat;
 	private final PixelFormat format;
 	private final PixelType type;
@@ -41,11 +48,19 @@ public class RenderTarget {
 		this.height = builder.height;
 
 
+		boolean isPixelFormatInteger = builder.internalFormat.getPixelFormat().isInteger();
+		this.allowsLinear = !isPixelFormatInteger;
+
+		if (IrisVulkan.isActive()) {
+			// Filtering and wrapping live in Iris' samplers (GlSampler), not in the texture.
+			this.mainTexture = VulkanTextures.create(label(false), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			this.altTexture = VulkanTextures.create(label(true), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			return;
+		}
+
 		this.mainTexture = GlStateManager._genTexture();
 		this.altTexture = GlStateManager._genTexture();
 
-		boolean isPixelFormatInteger = builder.internalFormat.getPixelFormat().isInteger();
-		this.allowsLinear = !isPixelFormatInteger;
 		setupTexture(mainTexture, builder.width, builder.height, !isPixelFormatInteger, false);
 		setupTexture(altTexture, builder.width, builder.height, !isPixelFormatInteger, true);
 
@@ -86,6 +101,12 @@ public class RenderTarget {
 		this.width = width;
 		this.height = height;
 
+		if (IrisVulkan.isActive()) {
+			VulkanTextures.replace(mainTexture, label(false), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			VulkanTextures.replace(altTexture, label(true), VULKAN_USAGE, VulkanFormats.toRenderTarget(internalFormat), width, height, vulkanMipLevels(width, height));
+			return;
+		}
+
 		resizeTexture(mainTexture, width, height, false);
 
 		resizeTexture(altTexture, width, height, true);
@@ -119,8 +140,23 @@ public class RenderTarget {
 		requireValid();
 		isValid = false;
 
+		if (IrisVulkan.isActive()) {
+			VulkanTextures.delete(mainTexture);
+			VulkanTextures.delete(altTexture);
+			return;
+		}
+
 		GlStateManager._deleteTexture(mainTexture);
 		GlStateManager._deleteTexture(altTexture);
+	}
+
+	/** Full mip chain on Vulkan (filled on demand by generateMipmaps); integer formats can't be filtered down. */
+	private int vulkanMipLevels(int width, int height) {
+		return allowsLinear ? 32 - Integer.numberOfLeadingZeros(Math.max(width, height)) : 1;
+	}
+
+	private String label(boolean alt) {
+		return "Iris " + (name != null ? name : "colortex") + " " + (alt ? "alt" : "main");
 	}
 
 	private void requireValid() {

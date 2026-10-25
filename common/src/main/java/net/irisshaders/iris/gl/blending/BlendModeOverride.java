@@ -16,4 +16,9 @@ public class BlendModeOverride {
 	public void apply() {
 		BlendModeStorage.overrideBlend(this.blendMode);
 	}
+
+	/** The blend mode this override sets, or null if it turns blending off. */
+	public BlendMode getBlendMode() {
+		return blendMode;
+	}
 }

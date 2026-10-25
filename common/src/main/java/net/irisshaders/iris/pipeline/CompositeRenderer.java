@@ -66,6 +66,10 @@ import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL46C;
 
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
+
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
@@ -269,6 +273,11 @@ public class CompositeRenderer {
 	}
 
 	public void renderAll() {
+		if (IrisVulkan.isActive()) {
+			renderAllVulkan();
+			return;
+		}
+
 		ImmediateState.temporarilyIgnorePass = true;
 
 		GLDebug.pushGroup(20 + compositePass.ordinal(), compositePass.name().toLowerCase(Locale.ROOT));
@@ -360,6 +369,41 @@ public class CompositeRenderer {
 
 	}
 
+	/**
+	 * Same passes as {@link #renderAll()}, as RenderPearl render passes: the program fills its uniform
+	 * block and texture units, then one fullscreen quad per pass into its draw buffers.
+	 */
+	private void renderAllVulkan() {
+		ImmediateState.temporarilyIgnorePass = true;
+
+		for (Pass pass : passes) {
+			if (pass.computes.length > 0 && Arrays.stream(pass.computes).anyMatch(Objects::nonNull)) {
+				VulkanUnsupported.once("compute shaders (" + pass.name + ")");
+			}
+
+			if (pass instanceof ComputeOnlyPass) {
+				continue;
+			}
+
+			for (int index : pass.mipmappedBuffers) {
+				setupMipmapping(renderTargets.get(index), pass.stageReadsFromAlt.contains(index));
+			}
+
+			int x = (int) (pass.viewWidth * pass.viewportScale.viewportX());
+			int y = (int) (pass.viewHeight * pass.viewportScale.viewportY());
+			int width = (int) (pass.viewWidth * pass.viewportScale.scale());
+			int height = (int) (pass.viewHeight * pass.viewportScale.scale());
+
+			pass.program.use();
+			this.customUniforms.push(pass.program);
+			VulkanDraw.fullscreen(pass.name, pass.program.getProgramId(), pass.framebuffer, x, y, width, height, pass.blendModeOverride);
+		}
+
+		Program.unbind();
+
+		ImmediateState.temporarilyIgnorePass = false;
+	}
+
 	// TODO: Don't just copy this from DeferredWorldRenderingPipeline
 	private Program createProgram(ProgramSource source, ImmutableSet<Integer> flipped, ImmutableSet<Integer> flippedAtLeastOnceSnapshot,
 								  Supplier<ShadowRenderTargets> shadowTargetsSupplier) {
@@ -425,7 +469,7 @@ public class CompositeRenderer {
 		ComputeProgram[] programs = new ComputeProgram[compute.length];
 		for (int i = 0; i < programs.length; i++) {
 			ComputeSource source = compute[i];
-			if (source == null || source.getSource().isEmpty()) {
+			if (source == null || source.getSource().isEmpty() || VulkanUnsupported.computeSkipped(source.getName())) {
 			} else {
 				// TODO: Properly handle empty shaders
 				Objects.requireNonNull(flipped);

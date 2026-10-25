@@ -16,6 +16,7 @@ import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import org.jetbrains.annotations.Nullable;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
@@ -205,6 +206,11 @@ public class StandardMacros {
 	 * @see <a href="https://github.com/sp614x/optifine/blob/9c6a5b5326558ccc57c6490b66b3be3b2dc8cbef/OptiFineDoc/doc/shaders.txt#L705-L707">Optifine Doc for GLSL Version</a>
 	 */
 	public static String getGlVersion(int name) {
+		if (IrisVulkan.isActive()) {
+			// Packs gate features on these; report what a GL 4.6 driver would (GLSL is compiled as 4.6 by shaderc).
+			return "460";
+		}
+
 		String info = GlStateManager._getString(name);
 
 		Matcher matcher = SEMVER_PATTERN.matcher(Objects.requireNonNull(info));
@@ -325,6 +331,12 @@ public class StandardMacros {
 	 * @see <a href="https://github.com/sp614x/optifine/blob/9c6a5b5326558ccc57c6490b66b3be3b2dc8cbef/OptiFineDoc/doc/shaders.txt#L735-L738">Optifine Doc</a>
 	 */
 	public static Set<String> getGlExtensions() {
+		if (IrisVulkan.isActive()) {
+			// No GL extensions to report; announcing none keeps packs off paths (image load/store, SSBOs)
+			// that the Vulkan port does not run yet.
+			return Set.of();
+		}
+
 		// In OpenGL Core, we must use a new way of retrieving extensions.
 		int numExtensions = GlStateManager._getInteger(GL30C.GL_NUM_EXTENSIONS);
 

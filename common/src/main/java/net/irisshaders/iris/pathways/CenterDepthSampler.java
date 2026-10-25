@@ -22,6 +22,11 @@ import net.irisshaders.iris.gl.uniform.UniformUpdateFrequency;
 import net.irisshaders.iris.mixinterface.CustomPass;
 import net.irisshaders.iris.pipeline.CompositeRenderer;
 import net.irisshaders.iris.uniforms.SystemTimeUniforms;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
+import net.irisshaders.iris.vulkan.VulkanFormats;
+import net.irisshaders.iris.vulkan.VulkanTextures;
 import net.minecraft.client.Minecraft;
 import org.apache.commons.io.IOUtils;
 import org.joml.Matrix4f;
@@ -51,21 +56,35 @@ public class CenterDepthSampler {
 	private boolean destroyed;
 
 	public CenterDepthSampler(IntSupplier depthSupplier, float halfLife) {
-		this.texture = GlStateManager._genTexture();
-		this.altTexture = GlStateManager._genTexture();
+		InternalTextureFormat format = InternalTextureFormat.R32F;
+		boolean vulkan = IrisVulkan.isActive();
+
+		if (vulkan) {
+			int usage = GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_COPY_DST;
+			this.texture = VulkanTextures.create("Iris center depth", usage, VulkanFormats.toRenderTarget(format), 1, 1, 1);
+			this.altTexture = VulkanTextures.create("Iris center depth (previous)", usage, VulkanFormats.toRenderTarget(format), 1, 1, 1);
+		} else {
+			this.texture = GlStateManager._genTexture();
+			this.altTexture = GlStateManager._genTexture();
+		}
+
 		this.framebuffer = new GlFramebuffer();
 
-		InternalTextureFormat format = InternalTextureFormat.R32F;
-		setupColorTexture(texture, format);
-		setupColorTexture(altTexture, format);
-		GlStateManager._bindTexture(0);
+		if (!vulkan) {
+			setupColorTexture(texture, format);
+			setupColorTexture(altTexture, format);
+			GlStateManager._bindTexture(0);
+		}
 
 		this.framebuffer.addColorAttachment(0, texture);
+		this.framebuffer.drawBuffers(new int[]{0});
 		ProgramBuilder builder;
 
 		try {
-			String fsh = new String(IOUtils.toByteArray(Objects.requireNonNull(getClass().getResourceAsStream("/centerDepth.fsh"))), StandardCharsets.UTF_8);
-			String vsh = new String(IOUtils.toByteArray(Objects.requireNonNull(getClass().getResourceAsStream("/centerDepth.vsh"))), StandardCharsets.UTF_8);
+			// The Vulkan variants already keep their uniforms in the IrisUniforms block.
+			String suffix = vulkan ? "_vulkan" : "";
+			String fsh = new String(IOUtils.toByteArray(Objects.requireNonNull(getClass().getResourceAsStream("/centerDepth" + suffix + ".fsh"))), StandardCharsets.UTF_8);
+			String vsh = new String(IOUtils.toByteArray(Objects.requireNonNull(getClass().getResourceAsStream("/centerDepth" + suffix + ".vsh"))), StandardCharsets.UTF_8);
 
 			builder = ProgramBuilder.begin("centerDepthSmooth", vsh, null, fsh, ImmutableSet.of(0, 1, 2));
 		} catch (IOException e) {
@@ -89,6 +108,14 @@ public class CenterDepthSampler {
 		}
 
 		hasFirstSample = true;
+
+		if (IrisVulkan.isActive()) {
+			this.program.use();
+			VulkanDraw.fullscreen("centerDepthSmooth", this.program.getProgramId(), this.framebuffer, 0, 0, 1, 1, null);
+			Program.unbind();
+			DepthCopyStrategy.fastest(false).copy(this.framebuffer, texture, null, altTexture, 1, 1);
+			return;
+		}
 
 		GpuBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).getBuffer(6);
 		var type = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).type();
@@ -138,8 +165,13 @@ public class CenterDepthSampler {
 	}
 
 	public void destroy() {
-		GlStateManager._deleteTexture(texture);
-		GlStateManager._deleteTexture(altTexture);
+		if (IrisVulkan.isActive()) {
+			VulkanTextures.delete(texture);
+			VulkanTextures.delete(altTexture);
+		} else {
+			GlStateManager._deleteTexture(texture);
+			GlStateManager._deleteTexture(altTexture);
+		}
 		framebuffer.destroy();
 		program.destroy();
 		destroyed = true;

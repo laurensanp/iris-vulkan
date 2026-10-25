@@ -1,5 +1,6 @@
 package net.irisshaders.iris.targets;
 
+import net.irisshaders.iris.gl.sampler.SamplerLimits;
 import com.google.common.collect.ImmutableList;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -19,7 +20,7 @@ import java.util.Map;
 public class ClearPassCreator {
 	public static ImmutableList<ClearPass> createClearPasses(RenderTargets renderTargets, boolean fullClear,
 															 PackRenderTargetDirectives renderTargetDirectives) {
-		final int maxDrawBuffers = GlStateManager._getInteger(GL21C.GL_MAX_DRAW_BUFFERS);
+		final int maxDrawBuffers = SamplerLimits.get().getMaxDrawBuffers();
 
 		// Sort buffers by their clear color so we can group up glClear calls.
 		Map<Vector2i, Map<ClearPassInformation, IntList>> clearByColor = new HashMap<>();
@@ -83,7 +84,7 @@ public class ClearPassCreator {
 			return ImmutableList.of();
 		}
 
-		final int maxDrawBuffers = GlStateManager._getInteger(GL21C.GL_MAX_DRAW_BUFFERS);
+		final int maxDrawBuffers = SamplerLimits.get().getMaxDrawBuffers();
 
 		// Sort buffers by their clear color so we can group up glClear calls.
 		Map<Vector4f, IntList> clearByColor = new HashMap<>();

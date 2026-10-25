@@ -14,6 +14,7 @@ import net.irisshaders.iris.gl.texture.DepthCopyStrategy;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.irisshaders.iris.shaderpack.properties.PackDirectives;
 import net.irisshaders.iris.shaderpack.properties.PackRenderTargetDirectives;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.joml.Vector2i;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
@@ -220,7 +221,8 @@ public class RenderTargets {
 	}
 
 	public void copyPreTranslucentDepth() {
-		if (translucentDepthDirty) {
+		// On Vulkan the destination already has its storage; the first copy is like any other.
+		if (translucentDepthDirty && !IrisVulkan.isActive()) {
 			translucentDepthDirty = false;
 			GlStateManager._bindTexture(noTranslucents.iris$getGlId());
 			depthSourceFb.bindAsReadBuffer();
@@ -232,7 +234,7 @@ public class RenderTargets {
 	}
 
 	public void copyPreHandDepth() {
-		if (handDepthDirty) {
+		if (handDepthDirty && !IrisVulkan.isActive()) {
 			handDepthDirty = false;
 			GlStateManager._bindTexture(noHand.iris$getGlId());
 			depthSourceFb.bindAsReadBuffer();

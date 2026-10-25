@@ -1,5 +1,6 @@
 package net.irisshaders.iris.gl.program;
 
+import net.irisshaders.iris.gl.IrisRenderSystem;
 import com.google.common.collect.ImmutableList;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -28,7 +29,7 @@ public class ProgramImages {
 	public void update() {
 		if (initializer != null) {
 			for (GlUniform1iCall call : initializer) {
-				GlStateManager._glUniform1i(call.location(), call.value());
+				IrisRenderSystem.uniform1i(call.location(), call.value());
 			}
 
 			initializer = null;
@@ -60,12 +61,12 @@ public class ProgramImages {
 
 		@Override
 		public boolean hasImage(String name) {
-			return GlStateManager._glGetUniformLocation(program, name) != -1;
+			return IrisRenderSystem.getUniformLocation(program, name) != -1;
 		}
 
 		@Override
 		public void addTextureImage(IntSupplier textureID, InternalTextureFormat internalFormat, String name) {
-			int location = GlStateManager._glGetUniformLocation(program, name);
+			int location = IrisRenderSystem.getUniformLocation(program, name);
 
 			if (location == -1) {
 				return;

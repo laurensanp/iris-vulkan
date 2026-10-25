@@ -45,6 +45,8 @@ import net.irisshaders.iris.pipeline.transform.transformer.SodiumTransformer;
 import net.irisshaders.iris.pipeline.transform.transformer.TextureTransformer;
 import net.irisshaders.iris.pipeline.transform.transformer.VanillaCoreTransformer;
 import net.irisshaders.iris.pipeline.transform.transformer.VanillaTransformer;
+import net.irisshaders.iris.pipeline.transform.transformer.VulkanTransformer;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import net.irisshaders.iris.shaderpack.texture.TextureStage;
 import org.antlr.v4.runtime.Token;
 import org.apache.logging.log4j.LogManager;
@@ -215,10 +217,14 @@ public class TransformPatcher {
 			// the compatibility transformer does a grouped transformation
 			CompatibilityTransformer.transformGrouped(transformer, trees, parameters);
 
-			if (IrisLimits.VK_CONFORMANCE) {
+			if (IrisLimits.VK_CONFORMANCE || IrisVulkan.isActive()) {
 				LayoutTransformer.transformGrouped(transformer, trees, parameters);
 			}
 			CommonTransformer.transformDepthPosition(transformer, trees, parameters);
+
+			if (IrisVulkan.isActive()) {
+				VulkanTransformer.transformGrouped(transformer, trees, parameters);
+			}
 		});
 		transformer.setTokenFilter(parseTokenFilter);
 	}

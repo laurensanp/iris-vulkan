@@ -13,6 +13,8 @@ import net.irisshaders.iris.gl.shader.ShaderType;
 import net.irisshaders.iris.gl.state.ValueUpdateNotifier;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.gl.texture.TextureType;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.function.IntSupplier;
@@ -34,6 +36,11 @@ public class ProgramBuilder extends ProgramUniforms.Builder implements SamplerHo
 	public static ProgramBuilder begin(String name, @Nullable String vertexSource, @Nullable String geometrySource,
 									   @Nullable String fragmentSource, ImmutableSet<Integer> reservedTextureUnits) {
 		RenderSystem.assertOnRenderThread();
+
+		if (IrisVulkan.isActive()) {
+			// Compiled to SPIR-V by RenderPearl when the program is first drawn with a set of attachments.
+			return new ProgramBuilder(name, VulkanProgram.create(name, vertexSource, geometrySource, fragmentSource), reservedTextureUnits);
+		}
 
 		GlShader vertex;
 		GlShader geometry;
@@ -72,6 +79,7 @@ public class ProgramBuilder extends ProgramUniforms.Builder implements SamplerHo
 		RenderSystem.assertOnRenderThread();
 
 		if (!IrisRenderSystem.supportsCompute()) {
+			// Also the case on Vulkan until the native compute layer exists (M3).
 			throw new IllegalStateException("This PC does not support compute shaders, but it's attempting to be used???");
 		}
 
@@ -95,6 +103,11 @@ public class ProgramBuilder extends ProgramUniforms.Builder implements SamplerHo
 	}
 
 	public void bindAttributeLocation(int index, String name) {
+		if (IrisVulkan.isActive()) {
+			// Vertex attributes are matched to the vertex format by name on Vulkan.
+			return;
+		}
+
 		IrisRenderSystem.bindAttributeLocation(program, index, name);
 	}
 

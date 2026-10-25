@@ -13,6 +13,11 @@ import net.irisshaders.iris.gl.sampler.SamplerLimits;
 import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
 import net.irisshaders.iris.mixin.GpuDeviceAccessor;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
+import net.irisshaders.iris.vulkan.VulkanProgram;
+import net.irisshaders.iris.vulkan.VulkanSamplers;
+import net.irisshaders.iris.vulkan.VulkanUnits;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
@@ -57,6 +62,19 @@ public class IrisRenderSystem {
 	private static final IntList textureToUnswizzle = new IntArrayList();
 
 	public static void initRenderer() {
+		if (IrisVulkan.isActive()) {
+			// No GL context: DSA, multibind and the GL capability flags do not apply. Compute and
+			// tessellation stay off until the native layer provides them (M3).
+			dsaState = null;
+			hasMultibind = false;
+			perspectiveProjectionMatrixBuffer = new ProjectionMatrixBuffer("Iris shadow map projection");
+			supportsCompute = false;
+			supportsTesselation = false;
+			samplers = new int[SamplerLimits.get().getMaxTextureUnits()];
+			Iris.logger.info("Iris is running on the Vulkan backend.");
+			return;
+		}
+
 		if (GL.getCapabilities().OpenGL45) {
 			dsaState = new DSACore();
 			Iris.logger.info("OpenGL 4.5 detected, enabling DSA.");
@@ -89,6 +107,10 @@ public class IrisRenderSystem {
 
 	public static void generateMipmaps(int texture, int mipmapTarget) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanDraw.generateMipmaps(texture);
+			return;
+		}
 		dsaState.generateMipmaps(texture, mipmapTarget);
 	}
 
@@ -117,12 +139,40 @@ public class IrisRenderSystem {
 
 	public static void uniformMatrix4fv(int location, boolean transpose, FloatBuffer matrix) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformMatrix(location, 4, matrix);
+			return;
+		}
 		GL32C.glUniformMatrix4fv(location, transpose, matrix);
 	}
 
 	public static void uniformMatrix4fv(int location, boolean transpose, float[] matrix) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformMatrix(location, 4, matrix);
+			return;
+		}
 		GL32C.glUniformMatrix4fv(location, transpose, matrix);
+	}
+
+	/** glGetUniformLocation; on Vulkan answered from the program's uniform block and sampler list. */
+	public static int getUniformLocation(int program, String name) {
+		if (IrisVulkan.isActive()) {
+			return VulkanProgram.get(program).location(name);
+		}
+		return GlStateManager._glGetUniformLocation(program, name);
+	}
+
+	public static void uniform1i(int location, int v0) {
+		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniform1i(location, v0);
+			return;
+		}
+		GlStateManager._glUniform1i(location, v0);
 	}
 
 	public static void copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height, int border) {
@@ -132,41 +182,79 @@ public class IrisRenderSystem {
 
 	public static void uniform1f(int location, float v0) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniform1f(location, v0);
+			return;
+		}
 		GL32C.glUniform1f(location, v0);
 	}
 
 	public static void uniform2f(int location, float v0, float v1) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformFloats(location, v0, v1);
+			return;
+		}
 		GL32C.glUniform2f(location, v0, v1);
 	}
 
 	public static void uniform2i(int location, int v0, int v1) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformInts(location, v0, v1);
+			return;
+		}
 		GL32C.glUniform2i(location, v0, v1);
 	}
 
 	public static void uniform3f(int location, float v0, float v1, float v2) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformFloats(location, v0, v1, v2);
+			return;
+		}
 		GL32C.glUniform3f(location, v0, v1, v2);
 	}
 
 	public static void uniform3i(int location, int v0, int v1, int v2) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformInts(location, v0, v1, v2);
+			return;
+		}
 		GL32C.glUniform3i(location, v0, v1, v2);
 	}
 
 	public static void uniform4f(int location, float v0, float v1, float v2, float v3) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformFloats(location, v0, v1, v2, v3);
+			return;
+		}
 		GL32C.glUniform4f(location, v0, v1, v2, v3);
 	}
 
 	public static void uniform4i(int location, int v0, int v1, int v2, int v3) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformInts(location, v0, v1, v2, v3);
+			return;
+		}
 		GL32C.glUniform4i(location, v0, v1, v2, v3);
 	}
 
 	public static void texParameteriv(int texture, int target, int pname, int[] params) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			return;
+		}
 		dsaState.texParameteriv(texture, target, pname, params);
 	}
 
@@ -184,11 +272,18 @@ public class IrisRenderSystem {
 
 	public static void texParameteri(int texture, int target, int pname, int param) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			// Filtering and wrapping are sampler state on Vulkan (Iris binds a GlSampler with every texture).
+			return;
+		}
 		dsaState.texParameteri(texture, target, pname, param);
 	}
 
 	public static void texParameterf(int texture, int target, int pname, float param) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			return;
+		}
 		dsaState.texParameterf(texture, target, pname, param);
 	}
 
@@ -287,7 +382,10 @@ public class IrisRenderSystem {
 	}
 
 	public static int getMaxImageUnits() {
-		if (GL.getCapabilities().OpenGL42 || GL.getCapabilities().GL_ARB_shader_image_load_store) {
+		if (IrisVulkan.isActive()) {
+			// Image load/store comes with the native compute layer (M3).
+			return 0;
+		} else if (GL.getCapabilities().OpenGL42 || GL.getCapabilities().GL_ARB_shader_image_load_store) {
 			return GlStateManager._getInteger(GL42C.GL_MAX_IMAGE_UNITS);
 		} else if (GL.getCapabilities().GL_EXT_shader_image_load_store) {
 			return GlStateManager._getInteger(EXTShaderImageLoadStore.GL_MAX_IMAGE_UNITS_EXT);
@@ -297,10 +395,18 @@ public class IrisRenderSystem {
 	}
 
 	public static boolean supportsSSBO() {
+		if (IrisVulkan.isActive()) {
+			return false;
+		}
+
 		return GL.getCapabilities().OpenGL44 || (GL.getCapabilities().GL_ARB_shader_storage_buffer_object && GL.getCapabilities().GL_ARB_buffer_storage);
 	}
 
 	public static boolean supportsImageLoadStore() {
+		if (IrisVulkan.isActive()) {
+			return false;
+		}
+
 		return GL.getCapabilities().glBindImageTexture != 0L || GL.getCapabilities().OpenGL42 || ((GL.getCapabilities().GL_ARB_shader_image_load_store || GL.getCapabilities().GL_EXT_shader_image_load_store) && GL.getCapabilities().GL_ARB_buffer_storage);
 	}
 
@@ -333,6 +439,11 @@ public class IrisRenderSystem {
 	}
 
 	public static boolean supportsBufferBlending() {
+		if (IrisVulkan.isActive()) {
+			// Per-attachment blend state is core Vulkan (independentBlend).
+			return true;
+		}
+
 		return GL.getCapabilities().GL_ARB_draw_buffers_blend || GL.getCapabilities().OpenGL40;
 	}
 
@@ -368,6 +479,10 @@ public class IrisRenderSystem {
 	// These functions are deprecated and unavailable in the core profile.
 
 	public static void bindTextureToUnit(int target, int unit, int texture) {
+		if (IrisVulkan.isActive()) {
+			VulkanUnits.bindTexture(unit, texture);
+			return;
+		}
 		dsaState.bindTextureToUnit(target, unit, texture);
 	}
 
@@ -430,14 +545,26 @@ public class IrisRenderSystem {
 	}
 
 	public static int genSampler() {
+		if (IrisVulkan.isActive()) {
+			return VulkanSamplers.create();
+		}
 		return GL33C.glGenSamplers();
 	}
 
 	public static void destroySampler(int glId) {
+		if (IrisVulkan.isActive()) {
+			VulkanSamplers.destroy(glId);
+			return;
+		}
 		GL33C.glDeleteSamplers(glId);
 	}
 
 	public static void bindSamplerToUnit(int unit, int sampler) {
+		if (IrisVulkan.isActive()) {
+			VulkanUnits.bindSampler(unit, sampler);
+			return;
+		}
+
 		if (samplers[unit] == sampler) {
 			return;
 		}
@@ -448,6 +575,11 @@ public class IrisRenderSystem {
 	}
 
 	public static void unbindAllSamplers() {
+		if (IrisVulkan.isActive()) {
+			VulkanUnits.unbindSamplers();
+			return;
+		}
+
 		boolean usedASampler = false;
 		for (int i = 0; i < samplers.length; i++) {
 			if (samplers[i] != 0) {
@@ -463,14 +595,25 @@ public class IrisRenderSystem {
 
 
 	public static void samplerParameteri(int sampler, int pname, int param) {
+		if (IrisVulkan.isActive()) {
+			VulkanSamplers.parameter(sampler, pname, param);
+			return;
+		}
 		GL33C.glSamplerParameteri(sampler, pname, param);
 	}
 
 	public static void samplerParameterf(int sampler, int pname, float param) {
+		if (IrisVulkan.isActive()) {
+			// Float parameters (LOD bias, anisotropy) have no RenderPearl equivalent.
+			return;
+		}
 		GL33C.glSamplerParameterf(sampler, pname, param);
 	}
 
 	public static void samplerParameteriv(int sampler, int pname, int[] params) {
+		if (IrisVulkan.isActive()) {
+			return;
+		}
 		GL33C.glSamplerParameteriv(sampler, pname, params);
 	}
 
@@ -559,11 +702,21 @@ public class IrisRenderSystem {
 
 	public static void uniformMatrix3fv(int index, boolean b, FloatBuffer buf) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformMatrix(index, 3, buf);
+			return;
+		}
 		GL46C.glUniformMatrix3fv(index, b, buf);
 	}
 
 	public static void uniformMatrix3fv(int index, boolean b, float[] buf) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.uniformMatrix(index, 3, buf);
+			return;
+		}
 		GL46C.glUniformMatrix3fv(index, b, buf);
 	}
 

@@ -7,6 +7,7 @@ package net.irisshaders.iris.gl;
 
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.AMDDebugOutput;
 import org.lwjgl.opengl.ARBDebugOutput;
 import org.lwjgl.opengl.GL;
@@ -303,7 +304,10 @@ public final class GLDebug {
 	}
 
 	public static void reloadDebugState() {
-		if (Iris.getIrisConfig().areDebugOptionsEnabled() && (GL.getCapabilities().GL_KHR_debug || GL.getCapabilities().OpenGL43)) {
+		if (IrisVulkan.isActive()) {
+			// No GL context to label objects or push groups in.
+			debugState = new UnsupportedDebugState();
+		} else if (Iris.getIrisConfig().areDebugOptionsEnabled() && (GL.getCapabilities().GL_KHR_debug || GL.getCapabilities().OpenGL43)) {
 			debugState = new KHRDebugState();
 		} else {
 			debugState = new UnsupportedDebugState();

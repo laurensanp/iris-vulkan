@@ -239,7 +239,6 @@ public class LayoutTransformer {
 
 				map.put(name, location);
 
-				Iris.logger.warn("Found a declaration named " + name);
 				newDeclarationData.add(new NewDeclarationData(typeQualifier, typeSpecifier, member, location++, name));
 				addedDeclarations++;
 			}
@@ -302,7 +301,6 @@ public class LayoutTransformer {
 			int addedDeclarations = 0;
 			for (DeclarationMember member : members) {
 				String name = member.getName().getName();
-				Iris.logger.warn("Found a member with name " + name);
 
 				if (!map.containsKey(name)) {
 					continue;

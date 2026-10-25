@@ -110,6 +110,17 @@ loom {
             configName = "Fabric Client"
             ideConfigGenerated(true)
             runDir("run")
+            // Vulkan port testing: -PtestWorld=<name> joins (and on first use creates) that world;
+            // -PdlssDebug=spin|walk turns on Iris DLSS' camera motion + frame capture (run/iris-dlss/captures).
+            if (project.hasProperty("testWorld")) {
+                vmArg("-Diris.vulkanTest.world=" + project.property("testWorld").toString())
+            }
+            if (project.hasProperty("dlssDebug")) {
+                val mode = project.property("dlssDebug").toString()
+                vmArg(if (mode == "walk") "-Diris-dlss.debugWalk=true" else "-Diris-dlss.debugSpin=1.5")
+                vmArg("-Diris-dlss.captureAt=300")
+                vmArg("-Diris-dlss.debugLog=true")
+            }
            // environmentVariable("SDL_VIDEODRIVER", "x11")
            // vmArgs("-Dmixin.debug.export=true")
            // vmArg("-XX:+AllowEnhancedClassRedefinition")

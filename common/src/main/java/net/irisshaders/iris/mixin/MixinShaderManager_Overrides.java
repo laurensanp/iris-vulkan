@@ -12,6 +12,7 @@ import com.mojang.renderpearl.frontend.FrontendRenderPipeline;
 import com.mojang.renderpearl.backend.api.BackendRenderPipeline;
 import it.unimi.dsi.fastutil.Function;
 import it.unimi.dsi.fastutil.objects.Object2ObjectArrayMap;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.mixinterface.GlRenderPipelineAccess;
 import net.irisshaders.iris.mixinterface.ShaderInstanceInterface;
@@ -67,6 +68,8 @@ public abstract class MixinShaderManager_Overrides {
 
 	@Inject(method = "getCompiledPipelineNullable", at = @At(value = "RETURN"), cancellable = true)
 	private static void redirectIrisProgram(RenderPipeline renderPipeline, CallbackInfoReturnable<CompiledRenderPipeline> cir) {
+		// Swaps in GL gbuffers programs; on Vulkan vanilla's pipelines draw the world until M2.
+		if (IrisVulkan.isActive()) return;
 		if (renderPipeline == CompositeRenderer.COMPOSITE_PIPELINE) return;
 		if (renderPipeline == RenderPipelines.ANIMATE_SPRITE_BLIT || renderPipeline == RenderPipelines.ANIMATE_SPRITE_INTERPOLATE) return;
 

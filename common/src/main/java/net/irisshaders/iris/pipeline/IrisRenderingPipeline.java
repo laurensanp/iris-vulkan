@@ -13,6 +13,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMaps;
+import net.caffeinemc.mods.sodium.client.render.chunk.vertex.format.ChunkMeshFormats;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.features.FeatureFlags;
 import net.irisshaders.iris.gl.GLDebug;
@@ -91,6 +92,10 @@ import net.irisshaders.iris.targets.ClearPass;
 import net.irisshaders.iris.targets.ClearPassCreator;
 import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.targets.backed.NativeImageBackedSingleColorTexture;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
+import net.irisshaders.iris.vulkan.VulkanTextures;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.irisshaders.iris.uniforms.CommonUniforms;
 import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
@@ -229,7 +234,8 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		this.occlusionCulling = programSet.getPackDirectives().shouldUseOcclusionCulling();
 		this.resolver = new ProgramFallbackResolver(programSet);
 		this.pack = programSet.getPack();
-        WorldRenderingSettings.INSTANCE.setVertexFormat(
+        // On Vulkan Sodium still draws terrain with its own shaders (M1), which read the compact format.
+        WorldRenderingSettings.INSTANCE.setVertexFormat(IrisVulkan.isActive() ? ChunkMeshFormats.COMPACT :
                 FormatAnalyzer.createFormat(true, true, true, true)); // TODO 26.2... or never.
 
 		RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
@@ -253,6 +259,13 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 		this.customImages = new HashSet<>();
 		for (ImageInformation information : programSet.getPack().getIrisCustomImages()) {
+			if (IrisVulkan.isActive()) {
+				// Image load/store needs the native layer (M3); CUSTOM_IMAGES is reported unsupported,
+				// so packs that check the feature leave these paths off.
+				VulkanUnsupported.once("custom images (" + information.name() + ")");
+				continue;
+			}
+
 			if (information.isRelative()) {
 				customImages.add(new GlImage.Relative(information.name(), information.samplerName(), information.format(), information.internalTextureFormat(), information.type(), information.clear(), information.relativeWidth(), information.relativeHeight(), main.width, main.height));
 			} else {
@@ -407,6 +420,12 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 
 		ShaderLoadingMap loadingMap = new ShaderLoadingMap((key, patchType) -> {
+			if (IrisVulkan.isActive()) {
+				// gbuffers/shadow programs replace vanilla's GL programs; on Vulkan the world is still
+				// drawn by vanilla's pipelines until the gbuffers port (M2).
+				return null;
+			}
+
 			try {
 				if (key.isShadow()) {
 					return createShadowShader(key.getName(), resolver.resolve(key.getProgram()), key, patchType);
@@ -443,6 +462,15 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		WorldRenderingSettings.INSTANCE.setBreaksAnisotropy(programSet.getPackDirectives().breaksAnisotropy());
 		WorldRenderingSettings.INSTANCE.setVoxelizeLightBlocks(programSet.getPackDirectives().shouldVoxelizeLightBlocks());
 		WorldRenderingSettings.INSTANCE.setSeparateEntityDraws(programSet.getPackDirectives().shouldUseSeparateEntityDraws());
+
+		if (IrisVulkan.isActive()) {
+			// Vanilla/Sodium shaders still draw the world on Vulkan (M1): bake meshes as without a pack.
+			WorldRenderingSettings.INSTANCE.setAmbientOcclusionLevel(1.0f);
+			WorldRenderingSettings.INSTANCE.setDisableDirectionalShading(false);
+			WorldRenderingSettings.INSTANCE.setUseSeparateAo(false);
+			WorldRenderingSettings.INSTANCE.setVoxelizeLightBlocks(false);
+			WorldRenderingSettings.INSTANCE.setSeparateEntityDraws(false);
+		}
 
 		if (shadowRenderTargets != null) {
 			GlProgram shader = shaderMap.getShader(ShaderKey.SHADOW_TERRAIN_CUTOUT);
@@ -505,7 +533,11 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 			ComputeProgram.unbind();
 		}
 
-		if (programSet.getPackDirectives().supportsColorCorrection()) {
+		if (IrisVulkan.isActive() && IrisVideoSettings.colorSpace != ColorSpace.SRGB) {
+			VulkanUnsupported.once("colour space conversion to " + IrisVideoSettings.colorSpace);
+		}
+
+		if (programSet.getPackDirectives().supportsColorCorrection() || IrisVulkan.isActive()) {
 			colorSpaceConverter = new ColorSpaceConverter() {
 				@Override
 				public void rebuildProgram(int width, int height, ColorSpace colorSpace) {
@@ -537,7 +569,7 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		ComputeProgram[] programs = new ComputeProgram[compute.length];
 		for (int i = 0; i < programs.length; i++) {
 			ComputeSource source = compute[i];
-			if (source == null || source.getSource().isEmpty()) {
+			if (source == null || source.getSource().isEmpty() || VulkanUnsupported.computeSkipped(source.getName())) {
 			} else {
 				ProgramBuilder builder;
 
@@ -600,7 +632,7 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		ComputeProgram[] programs = new ComputeProgram[compute.length];
 		for (int i = 0; i < programs.length; i++) {
 			ComputeSource source = compute[i];
-			if (source == null || source.getSource().isEmpty()) {
+			if (source == null || source.getSource().isEmpty() || VulkanUnsupported.computeSkipped(source.getName())) {
 			} else {
 				ProgramBuilder builder;
 
@@ -998,7 +1030,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		//
 		// If we forget to do this, then weird lines appear at the top of the screen and the right of the screen
 		// on Sildur's Vibrant Shaders.
-		Minecraft.getInstance().gameRenderer.mainRenderTarget().iris$bindFramebuffer();
+		if (!IrisVulkan.isActive()) {
+			// On Vulkan the world is drawn by vanilla into the main target (until M2); nothing to bind.
+			Minecraft.getInstance().gameRenderer.mainRenderTarget().iris$bindFramebuffer();
+		}
 		isMainBound = true;
 
 		if (changed) {
@@ -1068,6 +1103,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		// all non-translucent content, as required.
 		renderTargets.copyPreTranslucentDepth();
 
+		if (IrisVulkan.isActive()) {
+			copyMainColorIntoColortex0(flippedAfterPrepare);
+		}
+
 		deferredRenderer.renderAll();
 
 		// note: we are careful not to touch the lightmap texture unit or overlay color texture unit here,
@@ -1086,12 +1125,46 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	public void finalizeLevelRendering() {
 		isRenderingWorld = false;
 		removePhaseIfNeeded();
+
+		if (IrisVulkan.isActive()) {
+			copyMainColorIntoColortex0(flippedAfterTranslucent);
+		}
+
 		compositeRenderer.renderAll();
 		finalPassRenderer.renderFinalPass();
 	}
 
+	/**
+	 * M1 on Vulkan: vanilla still draws the world into the main target instead of the pack's gbuffers
+	 * writing colortex0, so hand the frame to the deferred/composite passes by copying it into the
+	 * colortex0 buffer they read next (main or alt, depending on the flips so far).
+	 */
+	private void copyMainColorIntoColortex0(ImmutableSet<Integer> flipped) {
+		GpuTexture source = Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTexture();
+		net.irisshaders.iris.targets.RenderTarget colortex0 = renderTargets.getOrCreate(0);
+		GpuTexture target = VulkanTextures.texture(flipped.contains(0) ? colortex0.getAltTexture() : colortex0.getMainTexture());
+
+		if (source == null || target == null) {
+			return;
+		}
+
+		if (source.getFormat() != target.getFormat()) {
+			// e.g. Solas keeps colortex0 in R11G11B10F: convert through a shader.
+			VulkanDraw.blit(source, target);
+			return;
+		}
+
+		int width = Math.min(source.getWidth(0), target.getWidth(0));
+		int height = Math.min(source.getHeight(0), target.getHeight(0));
+		RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(source, target, 0, 0, 0, 0, 0, width, height);
+	}
+
 	@Override
 	public void finalizeGameRendering() {
+		if (IrisVulkan.isActive()) {
+			return;
+		}
+
 		colorSpaceConverter.process((GlTexture) Minecraft.getInstance().gameRenderer.mainRenderTarget().getColorTexture());
 	}
 
@@ -1298,7 +1371,8 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		// A lot of dimension mods touch sky rendering, FabricSkyboxes injects at HEAD and cancels, etc.
 		DimensionType.Skybox skyType = Minecraft.getInstance().level.dimensionType().skybox();
 
-		if (shouldRenderSkyDisc && (skyType == DimensionType.Skybox.OVERWORLD || Minecraft.getInstance().level.dimensionType().hasSkyLight())) {
+		// The horizon box is drawn with a gbuffers program, which Vulkan doesn't have before M2.
+		if (!IrisVulkan.isActive() && shouldRenderSkyDisc && (skyType == DimensionType.Skybox.OVERWORLD || Minecraft.getInstance().level.dimensionType().hasSkyLight())) {
 			Vector3d fogColor3 = CapturedRenderingState.INSTANCE.getFogColor();
 
 			// NB: The alpha value must be 1.0 here, or else you will get a bunch of bugs. Sildur's Vibrant Shaders

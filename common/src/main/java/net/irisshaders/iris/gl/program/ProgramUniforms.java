@@ -11,6 +11,8 @@ import net.irisshaders.iris.gl.uniform.UniformHolder;
 import net.irisshaders.iris.gl.uniform.UniformType;
 import net.irisshaders.iris.gl.uniform.UniformUpdateFrequency;
 import net.irisshaders.iris.uniforms.SystemTimeUniforms;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.ARBShaderImageLoadStore;
@@ -291,7 +293,7 @@ public class ProgramUniforms {
 
 		@Override
 		public OptionalInt location(String name, UniformType type) {
-			int id = GlStateManager._glGetUniformLocation(program, name);
+			int id = IrisRenderSystem.getUniformLocation(program, name);
 
 			if (id == -1) {
 				return OptionalInt.empty();
@@ -310,6 +312,26 @@ public class ProgramUniforms {
 		}
 
 		public ProgramUniforms buildUniforms() {
+			if (IrisVulkan.isActive()) {
+				// Same check as below, against the types declared in the program's uniform block.
+				VulkanProgram vulkanProgram = VulkanProgram.get(program);
+
+				uniformNames.forEach((uniformName, provided) -> {
+					UniformType expected = vulkanProgram.uniformType(uniformName);
+
+					if (expected != provided) {
+						Iris.logger.error("[" + this.name + "] Wrong uniform type for " + uniformName + ": Iris is providing " + provided + " but the program expects " + expected + ". Disabling that uniform.");
+						once.remove(uniformName);
+						perTick.remove(uniformName);
+						perFrame.remove(uniformName);
+						dynamic.remove(uniformName);
+					}
+				});
+
+				return new ProgramUniforms(ImmutableList.copyOf(once.values()), ImmutableList.copyOf(perTick.values()), ImmutableList.copyOf(perFrame.values()),
+					ImmutableList.copyOf(dynamic.values()), ImmutableList.copyOf(notifiersToReset));
+			}
+
 			// Check for any unsupported uniforms and warn about them so that we can easily figure out what uniforms we
 			// need to add.
 			int activeUniforms = GlStateManager.glGetProgrami(program, GL20C.GL_ACTIVE_UNIFORMS);

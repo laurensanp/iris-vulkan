@@ -1,5 +1,6 @@
 package net.irisshaders.iris.gl.uniform;
 
+import net.irisshaders.iris.gl.IrisRenderSystem;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import org.lwjgl.BufferUtils;
@@ -31,7 +32,7 @@ public class MatrixFromFloatArrayUniform extends Uniform {
 			buffer.put(cachedValue);
 			buffer.rewind();
 
-			GL46C.glUniformMatrix4fv(location, false, buffer);
+			IrisRenderSystem.uniformMatrix4fv(location, false, buffer);
 		}
 	}
 }

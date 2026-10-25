@@ -60,6 +60,15 @@ import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL46C;
 
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
+import net.irisshaders.iris.vulkan.VulkanTextures;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
+
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -201,6 +210,11 @@ public class FinalPassRenderer {
 		final int baseWidth = main.width;
 		final int baseHeight = main.height;
 
+		if (IrisVulkan.isActive()) {
+			renderFinalPassVulkan(main);
+			return;
+		}
+
 		// Note that since DeferredWorldRenderingPipeline uses the depth texture of the main Minecraft framebuffer,
 		// we'll be writing to that depth buffer directly automatically and won't need to futz around with copying
 		// depth buffer content.
@@ -320,6 +334,53 @@ public class FinalPassRenderer {
 		GlStateManager._activeTexture(GL15C.GL_TEXTURE0);
 	}
 
+	/** {@link #renderFinalPass()} on Vulkan: final program (or a plain copy of colortex0) into the main target, then the swap copies. */
+	private void renderFinalPassVulkan(com.mojang.blaze3d.pipeline.RenderTarget main) {
+		CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+
+		if (this.finalPass != null) {
+			if (Arrays.stream(finalPass.computes).anyMatch(Objects::nonNull)) {
+				VulkanUnsupported.once("compute shaders (final)");
+			}
+
+			for (int index : finalPass.mipmappedBuffers) {
+				setupMipmapping(renderTargets.get(index), finalPass.stageReadsFromAlt.contains(index));
+			}
+
+			finalPass.program.use();
+			this.customUniforms.push(finalPass.program);
+			VulkanDraw.fullscreen("final", finalPass.program.getProgramId(), List.of(main.getColorTextureView()),
+				0, 0, main.width, main.height, null);
+			Program.unbind();
+		} else {
+			copyVulkan(encoder, baseline.getColorAttachment(0), main.getColorTexture(), main.width, main.height);
+		}
+
+		for (int i = 0; i < renderTargets.getRenderTargetCount(); i++) {
+			resetRenderTarget(renderTargets.get(i));
+		}
+
+		for (SwapPass swapPass : swapPasses) {
+			copyVulkan(encoder, swapPass.from.getColorAttachment(0), VulkanTextures.texture(swapPass.targetTexture), swapPass.width, swapPass.height);
+		}
+	}
+
+	/** glCopyTexSubImage2D from a framebuffer's first attachment; a Vulkan image copy needs matching formats. */
+	private static void copyVulkan(CommandEncoder encoder, int sourceId, GpuTexture target, int width, int height) {
+		GpuTexture source = VulkanTextures.texture(sourceId);
+
+		if (source == null || target == null) {
+			return;
+		}
+
+		if (source.getFormat() != target.getFormat()) {
+			VulkanUnsupported.once("copying " + source.getFormat() + " into " + target.getFormat() + " without a final pass");
+			return;
+		}
+
+		encoder.copyTextureToTexture(source, target, 0, 0, 0, 0, 0, width, height);
+	}
+
 	public void recalculateSwapPassSize() {
 		for (SwapPass swapPass : swapPasses) {
 			RenderTarget target = renderTargets.get(swapPass.target);
@@ -395,7 +456,7 @@ public class FinalPassRenderer {
 		ComputeProgram[] programs = new ComputeProgram[compute.length];
 		for (int i = 0; i < programs.length; i++) {
 			ComputeSource source = compute[i];
-			if (source == null || source.getSource().isEmpty()) {
+			if (source == null || source.getSource().isEmpty() || VulkanUnsupported.computeSkipped(source.getName())) {
 			} else {
 				// TODO: Properly handle empty shaders
 				Objects.requireNonNull(flipped);

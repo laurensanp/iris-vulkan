@@ -4,7 +4,10 @@ import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanTextures;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
@@ -13,6 +16,10 @@ import org.lwjgl.system.MemoryUtil;
 
 public interface DepthCopyStrategy {
 	static DepthCopyStrategy fastest(boolean combinedStencilRequired) {
+		if (IrisVulkan.isActive()) {
+			return new VulkanCopyImage();
+		}
+
 		// Check whether glCopyImageSubData is available by checking the function directly...
 		// Gl.getCapabilities().OpenGL43 can be false even if OpenGL 4.3 functions are supported,
 		// because Minecraft requests an OpenGL 3.2 forward compatible function.
@@ -95,6 +102,28 @@ public interface DepthCopyStrategy {
 				0, 0, width, height,
 				GL30C.GL_DEPTH_BUFFER_BIT | GL30C.GL_STENCIL_BUFFER_BIT,
 				GL30C.GL_NEAREST);
+		}
+	}
+
+	// T -> T on Vulkan: an image copy between depth textures of the same format (depth and stencil aspects).
+	class VulkanCopyImage implements DepthCopyStrategy {
+		private VulkanCopyImage() {
+			// private
+		}
+
+		@Override
+		public boolean needsDestFramebuffer() {
+			return false;
+		}
+
+		@Override
+		public void copy(GlFramebuffer sourceFb, int sourceTexture, GlFramebuffer destFb, int destTexture, int width, int height) {
+			GpuTexture source = VulkanTextures.texture(sourceTexture);
+			GpuTexture dest = VulkanTextures.texture(destTexture);
+
+			if (source != null && dest != null) {
+				RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(source, dest, 0, 0, 0, 0, 0, width, height);
+			}
 		}
 	}
 

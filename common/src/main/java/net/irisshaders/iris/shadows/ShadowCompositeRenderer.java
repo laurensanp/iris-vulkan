@@ -9,6 +9,7 @@ import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import net.irisshaders.iris.features.FeatureFlags;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
@@ -315,7 +316,7 @@ public class ShadowCompositeRenderer {
 		ComputeProgram[] programs = new ComputeProgram[sources.length];
 		for (int i = 0; i < programs.length; i++) {
 			ComputeSource source = sources[i];
-			if (source == null || source.getSource().isEmpty()) {
+			if (source == null || source.getSource().isEmpty() || VulkanUnsupported.computeSkipped(source.getName())) {
 			} else {
 				Objects.requireNonNull(flipped);
 				ProgramBuilder builder;

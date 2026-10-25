@@ -1,5 +1,6 @@
 package net.irisshaders.iris.gl.uniform;
 
+import net.irisshaders.iris.gl.IrisRenderSystem;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.irisshaders.iris.gl.state.ValueUpdateNotifier;
@@ -35,7 +36,7 @@ public class IntUniform extends Uniform {
 
 		if (cachedValue != newValue) {
 			cachedValue = newValue;
-			GlStateManager._glUniform1i(location, newValue);
+			IrisRenderSystem.uniform1i(location, newValue);
 		}
 	}
 }
