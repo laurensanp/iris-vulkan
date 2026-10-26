@@ -49,6 +49,7 @@ import net.irisshaders.iris.pathways.HorizonRenderer;
 import net.irisshaders.iris.pathways.colorspace.ColorSpace;
 import net.irisshaders.iris.pathways.colorspace.ColorSpaceConverter;
 import net.irisshaders.iris.pathways.colorspace.ColorSpaceFragmentConverter;
+import net.irisshaders.iris.pathways.colorspace.VulkanColorSpaceConverter;
 import net.irisshaders.iris.pbr.format.TextureFormat;
 import net.irisshaders.iris.pbr.format.TextureFormatLoader;
 import net.irisshaders.iris.pbr.texture.PBRTextureHolder;
@@ -530,11 +531,9 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 			ComputeProgram.unbind();
 		}
 
-		if (IrisVulkan.isActive() && IrisVideoSettings.colorSpace != ColorSpace.SRGB) {
-			VulkanUnsupported.once("colour space conversion to " + IrisVideoSettings.colorSpace);
-		}
-
-		if (programSet.getPackDirectives().supportsColorCorrection() || IrisVulkan.isActive()) {
+		if (IrisVulkan.isActive() && !programSet.getPackDirectives().supportsColorCorrection()) {
+			colorSpaceConverter = new VulkanColorSpaceConverter(main.width, main.height, IrisVideoSettings.colorSpace);
+		} else if (programSet.getPackDirectives().supportsColorCorrection()) {
 			colorSpaceConverter = new ColorSpaceConverter() {
 				@Override
 				public void rebuildProgram(int width, int height, ColorSpace colorSpace) {
@@ -1254,6 +1253,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	@Override
 	public void finalizeGameRendering() {
 		if (IrisVulkan.isActive()) {
+			if (colorSpaceConverter instanceof VulkanColorSpaceConverter converter) {
+				converter.processMainTarget();
+			}
+
 			return;
 		}
 
