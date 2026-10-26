@@ -8,6 +8,8 @@ import net.irisshaders.iris.gl.image.ImageBinding;
 import net.irisshaders.iris.gl.image.ImageHolder;
 import net.irisshaders.iris.gl.image.ImageLimits;
 import net.irisshaders.iris.gl.texture.InternalTextureFormat;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,16 +58,29 @@ public class ProgramImages {
 			this.images = ImmutableList.builder();
 			this.calls = new ArrayList<>();
 			this.nextImageUnit = 0;
-			this.maxImageUnits = ImageLimits.get().getMaxImageUnits();
+			this.maxImageUnits = IrisVulkan.isActive() ? Integer.MAX_VALUE : ImageLimits.get().getMaxImageUnits();
 		}
 
 		@Override
 		public boolean hasImage(String name) {
+			if (IrisVulkan.isActive()) {
+				return VulkanProgram.get(program).usesImage(name);
+			}
+
 			return IrisRenderSystem.getUniformLocation(program, name) != -1;
 		}
 
 		@Override
 		public void addTextureImage(IntSupplier textureID, InternalTextureFormat internalFormat, String name) {
+			if (IrisVulkan.isActive()) {
+				// No units on Vulkan: the program binds images by name (descriptor set 1, see VulkanStorage).
+				if (VulkanProgram.get(program).usesImage(name)) {
+					images.add(new ImageBinding(name, 0, 0, textureID));
+				}
+
+				return;
+			}
+
 			int location = IrisRenderSystem.getUniformLocation(program, name);
 
 			if (location == -1) {
@@ -87,7 +102,7 @@ public class ProgramImages {
 				internalFormat = InternalTextureFormat.RGBA8;
 			}
 
-			images.add(new ImageBinding(nextImageUnit, internalFormat.getGlFormat(), textureID));
+			images.add(new ImageBinding(name, nextImageUnit, internalFormat.getGlFormat(), textureID));
 			calls.add(new GlUniform1iCall(location, nextImageUnit));
 
 			nextImageUnit += 1;

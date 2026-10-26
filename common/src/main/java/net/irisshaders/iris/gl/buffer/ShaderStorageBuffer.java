@@ -3,6 +3,8 @@ package net.irisshaders.iris.gl.buffer;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import net.irisshaders.iris.gl.GLDebug;
 import net.irisshaders.iris.gl.IrisRenderSystem;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanBuffers;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL46C;
 import org.lwjgl.system.MemoryUtil;
@@ -52,6 +54,12 @@ public class ShaderStorageBuffer {
 	public void resizeIfRelative(int width, int height) {
 		if (!info.relative()) return;
 
+		if (IrisVulkan.isActive()) {
+			VulkanBuffers.allocate(id, (long) (height * info.scaleY()) * (long) (width * info.scaleX()) * info.size(), null);
+			bind();
+			return;
+		}
+
 		IrisRenderSystem.deleteBuffers(id);
 		int newId = GlStateManager._glGenBuffers();
 		GlStateManager._glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, newId);
@@ -71,6 +79,12 @@ public class ShaderStorageBuffer {
 	}
 
 	public void createStatic() {
+		if (IrisVulkan.isActive()) {
+			VulkanBuffers.allocate(getId(), info.size(), content);
+			bind();
+			return;
+		}
+
 		GlStateManager._glBindBuffer(GL43C.GL_SHADER_STORAGE_BUFFER, getId());
 		IrisRenderSystem.bufferStorage(GL43C.GL_SHADER_STORAGE_BUFFER, info.size(), content == null ? 0 : GL46C.GL_DYNAMIC_STORAGE_BIT);
 		if (content != null) {

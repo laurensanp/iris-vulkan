@@ -3,6 +3,7 @@ package net.irisshaders.iris.gl.sampler;
 import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanStorage;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL45C;
 
@@ -18,7 +19,7 @@ public class SamplerLimits {
 			// 8 is maxColorAttachments on every desktop Vulkan driver. SSBOs come with M3.
 			this.maxTextureUnits = 32;
 			this.maxDrawBuffers = 8;
-			this.maxShaderStorageUnits = 0;
+			this.maxShaderStorageUnits = VulkanStorage.MAX_BUFFERS;
 			return;
 		}
 

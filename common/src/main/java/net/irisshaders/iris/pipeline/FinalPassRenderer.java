@@ -339,9 +339,15 @@ public class FinalPassRenderer {
 		CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 
 		if (this.finalPass != null) {
-			if (Arrays.stream(finalPass.computes).anyMatch(Objects::nonNull)) {
-				VulkanUnsupported.once("compute shaders (final)");
+			for (ComputeProgram computeProgram : finalPass.computes) {
+				if (computeProgram != null) {
+					computeProgram.use();
+					this.customUniforms.push(computeProgram);
+					computeProgram.dispatch(main.width, main.height);
+				}
 			}
+
+			Program.unbind();
 
 			for (int index : finalPass.mipmappedBuffers) {
 				setupMipmapping(renderTargets.get(index), finalPass.stageReadsFromAlt.contains(index));

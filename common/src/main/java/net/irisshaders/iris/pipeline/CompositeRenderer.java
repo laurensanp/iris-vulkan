@@ -376,10 +376,18 @@ public class CompositeRenderer {
 	private void renderAllVulkan() {
 		ImmediateState.temporarilyIgnorePass = true;
 
+		com.mojang.blaze3d.pipeline.RenderTarget main = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+
 		for (Pass pass : passes) {
-			if (pass.computes.length > 0 && Arrays.stream(pass.computes).anyMatch(Objects::nonNull)) {
-				VulkanUnsupported.once("compute shaders (" + pass.name + ")");
+			for (ComputeProgram computeProgram : pass.computes) {
+				if (computeProgram != null) {
+					computeProgram.use();
+					this.customUniforms.push(computeProgram);
+					computeProgram.dispatch(main.width, main.height);
+				}
 			}
+
+			Program.unbind();
 
 			if (pass instanceof ComputeOnlyPass) {
 				continue;

@@ -14,9 +14,11 @@ import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.mixin.GlStateManagerAccessor;
 import net.irisshaders.iris.mixin.GpuDeviceAccessor;
 import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanBuffers;
 import net.irisshaders.iris.vulkan.VulkanDraw;
 import net.irisshaders.iris.vulkan.VulkanProgram;
 import net.irisshaders.iris.vulkan.VulkanSamplers;
+import net.irisshaders.iris.vulkan.VulkanStorage;
 import net.irisshaders.iris.vulkan.VulkanUnits;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -68,7 +70,7 @@ public class IrisRenderSystem {
 			dsaState = null;
 			hasMultibind = false;
 			perspectiveProjectionMatrixBuffer = new ProjectionMatrixBuffer("Iris shadow map projection");
-			supportsCompute = false;
+			supportsCompute = true; // raw Vulkan compute pipelines (VulkanCompute)
 			supportsTesselation = false;
 			samplers = new int[SamplerLimits.get().getMaxTextureUnits()];
 			Iris.logger.info("Iris is running on the Vulkan backend.");
@@ -350,6 +352,12 @@ public class IrisRenderSystem {
 
 	public static void bindBufferBase(int target, Integer index, int buffer) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			if (target == GL43C.GL_SHADER_STORAGE_BUFFER) {
+				VulkanStorage.setBuffer(index, VulkanBuffers.vkBuffer(buffer), VulkanBuffers.size(buffer));
+			}
+			return;
+		}
 		GL43C.glBindBufferBase(target, index, buffer);
 	}
 
@@ -383,8 +391,8 @@ public class IrisRenderSystem {
 
 	public static int getMaxImageUnits() {
 		if (IrisVulkan.isActive()) {
-			// Image load/store comes with the native compute layer (M3).
-			return 0;
+			// Storage images in descriptor set 1 (VulkanStorage).
+			return VulkanStorage.MAX_IMAGES;
 		} else if (GL.getCapabilities().OpenGL42 || GL.getCapabilities().GL_ARB_shader_image_load_store) {
 			return GlStateManager._getInteger(GL42C.GL_MAX_IMAGE_UNITS);
 		} else if (GL.getCapabilities().GL_EXT_shader_image_load_store) {
@@ -396,7 +404,7 @@ public class IrisRenderSystem {
 
 	public static boolean supportsSSBO() {
 		if (IrisVulkan.isActive()) {
-			return false;
+			return true;
 		}
 
 		return GL.getCapabilities().OpenGL44 || (GL.getCapabilities().GL_ARB_shader_storage_buffer_object && GL.getCapabilities().GL_ARB_buffer_storage);
@@ -404,7 +412,7 @@ public class IrisRenderSystem {
 
 	public static boolean supportsImageLoadStore() {
 		if (IrisVulkan.isActive()) {
-			return false;
+			return true;
 		}
 
 		return GL.getCapabilities().glBindImageTexture != 0L || GL.getCapabilities().OpenGL42 || ((GL.getCapabilities().GL_ARB_shader_image_load_store || GL.getCapabilities().GL_EXT_shader_image_load_store) && GL.getCapabilities().GL_ARB_buffer_storage);
@@ -419,19 +427,39 @@ public class IrisRenderSystem {
 	}
 
 	public static void getProgramiv(int program, int value, int[] storage) {
+		if (IrisVulkan.isActive()) {
+			if (value == GL43C.GL_COMPUTE_WORK_GROUP_SIZE) {
+				System.arraycopy(VulkanProgram.get(program).localSize(), 0, storage, 0, Math.min(3, storage.length));
+			}
+			return;
+		}
 		GL32C.glGetProgramiv(program, value, storage);
 	}
 
 	public static void dispatchCompute(int workX, int workY, int workZ) {
+		if (IrisVulkan.isActive()) {
+			VulkanProgram program = VulkanProgram.current();
+			if (program != null) program.dispatch(workX, workY, workZ, 0L, 0L);
+			return;
+		}
 		GL45C.glDispatchCompute(workX, workY, workZ);
 	}
 
 	public static void dispatchCompute(Vector3i workGroups) {
+		if (IrisVulkan.isActive()) {
+			dispatchCompute(workGroups.x, workGroups.y, workGroups.z);
+			return;
+		}
 		GL45C.glDispatchCompute(workGroups.x, workGroups.y, workGroups.z);
 	}
 
 	public static void memoryBarrier(int barriers) {
 		RenderSystem.assertOnRenderThread();
+
+		if (IrisVulkan.isActive()) {
+			// Raw Vulkan work records its own barriers; RenderPearl puts one after each pass.
+			return;
+		}
 
 		if (supportsCompute) {
 			GL45C.glMemoryBarrier(barriers);
@@ -618,6 +646,10 @@ public class IrisRenderSystem {
 	}
 
 	public static long getVRAM() {
+		if (IrisVulkan.isActive()) {
+			// No portable query; VMA fails the allocation itself if memory runs out.
+			return 1L << 40;
+		}
 		if (GL.getCapabilities().GL_ATI_meminfo) {
 			int[] params = new int[4];
 			GL32C.glGetIntegerv(ATIMeminfo.GL_TEXTURE_FREE_MEMORY_ATI,params);
@@ -631,6 +663,10 @@ public class IrisRenderSystem {
 
 	public static void deleteBuffers(int glId) {
 		RenderSystem.assertOnRenderThread();
+		if (IrisVulkan.isActive()) {
+			VulkanBuffers.delete(glId);
+			return;
+		}
 		GL43C.glDeleteBuffers(glId);
 	}
 
@@ -652,14 +688,24 @@ public class IrisRenderSystem {
 	}
 
 	public static void dispatchComputeIndirect(long offset) {
+		if (IrisVulkan.isActive()) {
+			// ComputeProgram.dispatch passes the buffer itself on Vulkan.
+			return;
+		}
 		GL43C.glDispatchComputeIndirect(offset);
 	}
 
 	public static void bindBuffer(int target, int buffer) {
+		if (IrisVulkan.isActive()) {
+			return;
+		}
 		GL46C.glBindBuffer(target, buffer);
 	}
 
 	public static int createBuffers() {
+		if (IrisVulkan.isActive()) {
+			return VulkanBuffers.reserve();
+		}
 		return dsaState.createBuffers();
 	}
 

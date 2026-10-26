@@ -8,6 +8,9 @@ import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.gl.texture.PixelFormat;
 import net.irisshaders.iris.gl.texture.PixelType;
 import net.irisshaders.iris.gl.texture.TextureType;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanFormats;
+import net.irisshaders.iris.vulkan.VulkanTextures;
 import org.lwjgl.opengl.ARBClearTexture;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL13C;
@@ -25,7 +28,9 @@ public class GlImage extends GlResource {
 	private final boolean clear;
 
 	public GlImage(String name, String samplerName, TextureType target, PixelFormat format, InternalTextureFormat internalFormat, PixelType pixelType, boolean clear, int width, int height, int depth) {
-		super(IrisRenderSystem.createTexture(target.getGlType()));
+		super(IrisVulkan.isActive()
+			? VulkanTextures.createImage(name, VulkanFormats.toRenderTarget(internalFormat), vulkanDimension(target), width, height, depth)
+			: IrisRenderSystem.createTexture(target.getGlType()));
 
 		this.name = name;
 		this.samplerName = samplerName;
@@ -34,6 +39,11 @@ public class GlImage extends GlResource {
 		this.internalTextureFormat = internalFormat;
 		this.pixelType = pixelType;
 		this.clear = clear;
+
+		if (IrisVulkan.isActive()) {
+			// Created as a cleared storage image; filtering comes from the sampler it is read with.
+			return;
+		}
 
 		GLDebug.nameObject(GL43C.GL_TEXTURE, getGlId(), name);
 
@@ -69,7 +79,20 @@ public class GlImage extends GlResource {
 		clear();
 	}
 
+	protected static int vulkanDimension(TextureType target) {
+		return switch (target) {
+			case TEXTURE_1D -> 1;
+			case TEXTURE_3D -> 3;
+			default -> 2;
+		};
+	}
+
 	public void clear() {
+		if (IrisVulkan.isActive()) {
+			VulkanTextures.clear(getGlId());
+			return;
+		}
+
 		ARBClearTexture.glClearTexImage(getGlId(), 0, format.getGlFormat(), pixelType.getGlFormat(), (int[]) null);
 	}
 
@@ -105,6 +128,11 @@ public class GlImage extends GlResource {
 
 	@Override
 	protected void destroyInternal() {
+		if (IrisVulkan.isActive()) {
+			VulkanTextures.delete(getGlId());
+			return;
+		}
+
 		GlStateManager._deleteTexture(getGlId());
 	}
 
@@ -139,6 +167,12 @@ public class GlImage extends GlResource {
 
 		@Override
 		public void updateNewSize(int width, int height) {
+			if (IrisVulkan.isActive()) {
+				VulkanTextures.replaceImage(getGlId(), name, VulkanFormats.toRenderTarget(internalTextureFormat), 2,
+					(int) (width * relativeWidth), (int) (height * relativeHeight), 1);
+				return;
+			}
+
 			IrisRenderSystem.bindTextureForSetup(target.getGlType(), getGlId());
 			target.apply(getGlId(), (int) (width * relativeWidth), (int) (height * relativeHeight), 0, internalTextureFormat.getGlFormat(), format.getGlFormat(), pixelType.getGlFormat(), null);
 

@@ -24,6 +24,11 @@ import com.mojang.renderpearl.frontend.FrontendRenderPipeline;
 import com.mojang.renderpearl.frontend.shaders.GlslCompiler;
 import com.mojang.renderpearl.util.ShaderCompileException;
 import net.minecraft.client.renderer.ShaderDefines;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
+import org.lwjgl.vulkan.VkCommandBuffer;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.irisshaders.iris.Iris;
 import net.minecraft.resources.Identifier;
@@ -80,9 +85,38 @@ public final class VulkanProgram {
 	private final Set<String> liveBindings;
 	/** Vertex shader inputs in the compiled SPIR-V. */
 	private final Map<String, VertexInput> vertexInputs = new HashMap<>();
+	/** Set 1 bindings (storage images / buffers, see VulkanStorage) the GLSL declares, and the texture bound to each image. */
+	private final int[] storageBindings;
+	private final Int2IntOpenHashMap storageImages = new Int2IntOpenHashMap();
+	/** Compute programs only: the raw Vulkan pipeline and the declared local size. */
+	@Nullable
+	private final VulkanCompute compute;
+	private final int[] localSize;
 	private int nextVariant;
 
+	private VulkanProgram(int id, String name, String computeSource) {
+		this.id = id;
+		this.name = name;
+		this.location = Identifier.fromNamespaceAndPath("iris", "vk/" + sanitize(name) + "_" + id);
+		this.vertex = null;
+		this.fragment = null;
+		this.layout = VulkanUniformLayout.parse(computeSource);
+		this.storageBindings = storageBindings(computeSource);
+		this.compute = VulkanCompute.create(name, computeSource, storageBindings.length > 0);
+		this.liveBindings = new LinkedHashSet<>(compute.names());
+		Set<String> samplerNames = new LinkedHashSet<>(liveBindings);
+		samplerNames.remove(VulkanUniformLayout.BLOCK_NAME);
+		this.samplers = List.copyOf(samplerNames);
+		this.samplerUnits = new int[samplers.size()];
+		this.localSize = localSize(computeSource);
+
+		this.uniforms = MemoryUtil.memCalloc(layout.size());
+		layout.writeDefaults(uniforms);
+	}
+
 	private VulkanProgram(int id, String name, String vertex, String fragment) {
+		this.compute = null;
+		this.localSize = new int[]{1, 1, 1};
 		this.id = id;
 		this.name = name;
 		this.location = Identifier.fromNamespaceAndPath("iris", "vk/" + sanitize(name) + "_" + id);
@@ -99,6 +133,8 @@ public final class VulkanProgram {
 		this.samplers = List.copyOf(samplerNames);
 		this.samplerUnits = new int[samplers.size()];
 
+		this.storageBindings = storageBindings(this.vertex, this.fragment);
+
 		this.uniforms = MemoryUtil.memCalloc(layout.size());
 		layout.writeDefaults(uniforms);
 	}
@@ -113,6 +149,65 @@ public final class VulkanProgram {
 		int id = nextId++;
 		PROGRAMS.put(id, new VulkanProgram(id, name, vertex, fragment));
 		return id;
+	}
+
+	/** A compute program (glCreateShader(GL_COMPUTE_SHADER) + link). */
+	public static int createCompute(String name, String source) {
+		int id = nextId++;
+		PROGRAMS.put(id, new VulkanProgram(id, name, source));
+		return id;
+	}
+
+	/** GL_COMPUTE_WORK_GROUP_SIZE */
+	public int[] localSize() {
+		return localSize.clone();
+	}
+
+	/** glDispatchCompute / glDispatchComputeIndirect with the current uniforms, samplers and images. */
+	public void dispatch(int x, int y, int z, long indirectBuffer, long indirectOffset) {
+		if (compute == null) {
+			throw new IllegalStateException("Program " + name + " is not a compute program");
+		}
+
+		VkCommandBuffer commandBuffer = VulkanRaw.commandBuffer();
+		Map<String, long[]> resources = new HashMap<>();
+
+		if (!layout.isEmpty() && compute.binds(VulkanUniformLayout.BLOCK_NAME)) {
+			GpuBufferSlice slice = RenderSystem.getDevice().createCommandEncoder().transientMemory()
+				.uploadStaging(uniforms.duplicate().clear().limit(layout.size()), UNIFORM_ALIGNMENT, GpuBuffer.USAGE_UNIFORM);
+			resources.put(VulkanUniformLayout.BLOCK_NAME, new long[]{((VulkanGpuBuffer) slice.buffer()).vkBuffer(), slice.offset(), slice.length()});
+		}
+
+		for (int i = 0; i < samplers.size(); i++) {
+			int unit = samplerUnits[i];
+			GpuTextureView view = VulkanUnits.viewOverride(unit);
+
+			if (view == null) {
+				view = VulkanTextures.view(VulkanUnits.texture(unit));
+			}
+
+			if (view == null) {
+				view = VulkanTextures.view(VulkanUnits.fallbackTexture());
+			}
+
+			resources.put(samplers.get(i), new long[]{((VulkanGpuTextureView) view).vkImageView(),
+				((VulkanGpuSampler) VulkanSamplers.forView(VulkanUnits.sampler(unit), view)).vkSampler()});
+		}
+
+		compute.dispatch(commandBuffer, resources, usesStorage() ? storageSet() : 0L, x, y, z, indirectBuffer, indirectOffset);
+	}
+
+	private static final Pattern LOCAL_SIZE = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
+
+	private static int[] localSize(String source) {
+		int[] size = {1, 1, 1};
+		Matcher matcher = LOCAL_SIZE.matcher(source);
+
+		while (matcher.find()) {
+			size[matcher.group(1).charAt(0) - 'x'] = Integer.parseInt(matcher.group(2));
+		}
+
+		return size;
 	}
 
 	public static VulkanProgram get(int id) {
@@ -145,6 +240,11 @@ public final class VulkanProgram {
 
 			program.pipelines.values().forEach(CompiledRenderPipeline::close);
 			program.pipelines.clear();
+
+			if (program.compute != null) {
+				program.compute.close();
+			}
+
 			MemoryUtil.memFree(program.uniforms);
 		}
 	}
@@ -254,6 +354,7 @@ public final class VulkanProgram {
 	 */
 	public void bind(RenderPass pass, List<GpuFormat> colorFormats, List<Optional<BlendFunction>> blend, List<Integer> writeMasks) {
 		pass.setPipeline(pipeline(new PipelineKey(List.copyOf(colorFormats), List.copyOf(blend), List.copyOf(writeMasks))));
+		bindStorage();
 		Set<String> live = liveBindings;
 
 		if (!layout.isEmpty() && live.contains(VulkanUniformLayout.BLOCK_NAME)) {
@@ -278,13 +379,91 @@ public final class VulkanProgram {
 				view = VulkanTextures.view(VulkanUnits.fallbackTexture());
 			}
 
-			pass.setUniform(samplers.get(i), view, VulkanSamplers.get(VulkanUnits.sampler(unit)));
+			pass.setUniform(samplers.get(i), view, VulkanSamplers.forView(VulkanUnits.sampler(unit), view));
 		}
 	}
 
 	/** Whether the compiled program reads this sampler or block. */
 	public boolean binds(String name) {
 		return liveBindings.contains(name);
+	}
+
+	/** Whether the GLSL declares this storage image. */
+	public boolean usesImage(String name) {
+		int binding = VulkanStorage.existingImageBinding(name);
+
+		for (int used : storageBindings) {
+			if (used == binding) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/** glBindImageTexture for the image of this name (Iris' ProgramImages, after use()). */
+	public void setImage(String name, int texture) {
+		int binding = VulkanStorage.existingImageBinding(name);
+
+		if (binding >= 0) {
+			storageImages.put(binding, texture);
+		}
+	}
+
+	public boolean usesStorage() {
+		return storageBindings.length > 0;
+	}
+
+	/** The set 1 descriptors for the current images and buffers. */
+	public long storageSet() {
+		List<VulkanStorage.Write> writes = new ArrayList<>(storageBindings.length);
+
+		for (int binding : storageBindings) {
+			if (binding >= VulkanStorage.BUFFER_BASE) {
+				VulkanStorage.Write buffer = VulkanStorage.buffer(binding);
+
+				if (buffer != null) {
+					writes.add(buffer);
+				} else {
+					VulkanUnsupported.once("program " + name + " reads a shader storage buffer that doesn't exist (binding " + (binding - VulkanStorage.BUFFER_BASE) + ")");
+				}
+
+				continue;
+			}
+
+			GpuTextureView view = VulkanTextures.levelView(storageImages.get(binding), 0);
+
+			if (view instanceof VulkanGpuTextureView vulkanView) {
+				writes.add(VulkanStorage.Write.image(binding, vulkanView.vkImageView()));
+			} else {
+				VulkanUnsupported.once("program " + name + " uses a storage image without a texture (binding " + binding + ")");
+			}
+		}
+
+		return VulkanStorage.descriptorSet(writes);
+	}
+
+	/** Makes the set 1 of this program the one the next draws bind (pipelines without set 1 ignore it). */
+	private void bindStorage() {
+		VulkanStorage.setGraphicsSet(usesStorage() ? storageSet() : 0L);
+	}
+
+	private static final Pattern STORAGE_BINDING = Pattern.compile("set\\s*=\\s*" + VulkanStorage.SET + "\\s*,\\s*binding\\s*=\\s*(\\d+)");
+
+	private static int[] storageBindings(String... sources) {
+		Set<Integer> bindings = new java.util.TreeSet<>();
+
+		for (String source : sources) {
+			if (source != null) {
+				Matcher matcher = STORAGE_BINDING.matcher(source);
+
+				while (matcher.find()) {
+					bindings.add(Integer.parseInt(matcher.group(1)));
+				}
+			}
+		}
+
+		return bindings.stream().mapToInt(Integer::intValue).toArray();
 	}
 
 	/**
@@ -294,6 +473,7 @@ public final class VulkanProgram {
 	 */
 	public void bindResources(RenderPass pass, Set<String> external) {
 		bindUniformBlock(pass);
+		bindStorage();
 
 		for (int i = 0; i < samplers.size(); i++) {
 			String sampler = samplers.get(i);
@@ -313,7 +493,7 @@ public final class VulkanProgram {
 				view = VulkanTextures.view(VulkanUnits.fallbackTexture());
 			}
 
-			pass.setUniform(sampler, view, VulkanSamplers.get(VulkanUnits.sampler(unit)));
+			pass.setUniform(sampler, view, VulkanSamplers.forView(VulkanUnits.sampler(unit), view));
 		}
 	}
 
@@ -426,6 +606,10 @@ public final class VulkanProgram {
 
 		for (int i = 0; i < colorTargets.size(); i++) {
 			builder.withColorTargetState(i, colorTargets.get(i));
+		}
+
+		if (usesStorage()) {
+			VulkanStorage.markPipeline(variantLocation.toString());
 		}
 
 		CompiledRenderPipeline pipeline = RenderSystem.getDevice()
@@ -592,6 +776,10 @@ public final class VulkanProgram {
 
 		for (int i = 0; i < key.colorFormats.size(); i++) {
 			builder.withColorTargetState(i, new ColorTargetState(key.blend.get(i), key.colorFormats.get(i), key.writeMasks.get(i)));
+		}
+
+		if (usesStorage()) {
+			VulkanStorage.markPipeline(location.toString());
 		}
 
 		// RenderPearl logs compile errors and returns a placeholder instead of throwing.

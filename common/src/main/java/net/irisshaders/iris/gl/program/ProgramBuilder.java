@@ -79,8 +79,12 @@ public class ProgramBuilder extends ProgramUniforms.Builder implements SamplerHo
 		RenderSystem.assertOnRenderThread();
 
 		if (!IrisRenderSystem.supportsCompute()) {
-			// Also the case on Vulkan until the native compute layer exists (M3).
 			throw new IllegalStateException("This PC does not support compute shaders, but it's attempting to be used???");
+		}
+
+		if (IrisVulkan.isActive()) {
+			// A raw Vulkan compute pipeline (VulkanCompute), built right away so errors show up here.
+			return new ProgramBuilder(name, VulkanProgram.createCompute(name, source), reservedTextureUnits);
 		}
 
 		GlShader compute = buildShader(ShaderType.COMPUTE, name + ".csh", source);

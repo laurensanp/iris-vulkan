@@ -6,6 +6,9 @@ import net.irisshaders.iris.gl.GlResource;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shaderpack.FilledIndirectPointer;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanBuffers;
+import net.irisshaders.iris.vulkan.VulkanProgram;
 import org.joml.Vector2f;
 import org.joml.Vector3i;
 import org.lwjgl.opengl.GL43C;
@@ -27,7 +30,11 @@ public final class ComputeProgram extends GlResource {
 		super(program);
 
 		localSize = new int[3];
-		IrisRenderSystem.getProgramiv(program, GL43C.GL_COMPUTE_WORK_GROUP_SIZE, localSize);
+		if (IrisVulkan.isActive()) {
+			System.arraycopy(VulkanProgram.get(program).localSize(), 0, localSize, 0, 3);
+		} else {
+			IrisRenderSystem.getProgramiv(program, GL43C.GL_COMPUTE_WORK_GROUP_SIZE, localSize);
+		}
 		this.uniforms = uniforms;
 		this.samplers = samplers;
 		this.images = images;
@@ -35,6 +42,12 @@ public final class ComputeProgram extends GlResource {
 
 	public static void unbind() {
 		ProgramUniforms.clearActiveUniforms();
+
+		if (IrisVulkan.isActive()) {
+			VulkanProgram.use(0);
+			return;
+		}
+
 		GlStateManager._glUseProgram(0);
 	}
 
@@ -64,7 +77,11 @@ public final class ComputeProgram extends GlResource {
 	}
 
 	public void use() {
-		GlStateManager._glUseProgram(getGlId());
+		if (IrisVulkan.isActive()) {
+			VulkanProgram.use(getGlId());
+		} else {
+			GlStateManager._glUseProgram(getGlId());
+		}
 
 		uniforms.update();
 		samplers.update();
@@ -72,6 +89,20 @@ public final class ComputeProgram extends GlResource {
 	}
 
 	public void dispatch(float width, float height) {
+		if (IrisVulkan.isActive()) {
+			// Barriers come with each dispatch (VulkanCompute).
+			VulkanProgram program = VulkanProgram.get(getGlId());
+
+			if (indirectPointer != null) {
+				program.dispatch(0, 0, 0, VulkanBuffers.vkBuffer(indirectPointer.buffer()), indirectPointer.offset());
+			} else {
+				Vector3i groups = getWorkGroups(width, height);
+				program.dispatch(groups.x, groups.y, groups.z, 0L, 0L);
+			}
+
+			return;
+		}
+
 		int barriers = 0;
 
 		if (!Iris.getPipelineManager().getPipeline().map(WorldRenderingPipeline::allowConcurrentCompute).orElse(false)) {
@@ -96,6 +127,11 @@ public final class ComputeProgram extends GlResource {
 	}
 
 	public void destroyInternal() {
+		if (IrisVulkan.isActive()) {
+			VulkanProgram.delete(getGlId());
+			return;
+		}
+
 		GlStateManager.glDeleteProgram(getGlId());
 	}
 

@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.renderpearl.api.textures.AddressMode;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuSampler;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.opengl.GL11C;
@@ -22,6 +23,8 @@ public final class VulkanSamplers {
 	private static int nextId = 1;
 	@Nullable
 	private static GpuSampler fallbackLinear;
+	@Nullable
+	private static GpuSampler nearestClamped;
 
 	private VulkanSamplers() {
 	}
@@ -89,6 +92,24 @@ public final class VulkanSamplers {
 		}
 
 		return state.sampler;
+	}
+
+	/** The sampler to read {@code view} with: integer textures can't be filtered, so they get a nearest one. */
+	public static GpuSampler forView(int sampler, GpuTextureView view) {
+		GpuSampler gpuSampler = get(sampler);
+		String format = view.texture().getFormat().name();
+
+		if ((format.endsWith("_UINT") || format.endsWith("_SINT"))
+			&& (gpuSampler.getMinFilter() == FilterMode.LINEAR || gpuSampler.getMagFilter() == FilterMode.LINEAR)) {
+			if (nearestClamped == null) {
+				nearestClamped = RenderSystem.getDevice().createSampler(AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
+					FilterMode.NEAREST, FilterMode.NEAREST, 1, OptionalDouble.of(0.0));
+			}
+
+			return nearestClamped;
+		}
+
+		return gpuSampler;
 	}
 
 	public static boolean isCompare(int sampler) {

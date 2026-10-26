@@ -5,6 +5,7 @@ import io.github.douira.glsl_transformer.ast.node.declaration.FunctionParameter;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.PrecisionQualifier;
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
+import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
@@ -33,6 +34,7 @@ import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.pipeline.transform.Patch;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.parameter.Parameters;
+import net.irisshaders.iris.vulkan.VulkanStorage;
 import net.irisshaders.iris.vulkan.VulkanUniformLayout;
 import net.irisshaders.iris.vulkan.VulkanUnsupported;
 
@@ -87,7 +89,7 @@ public class VulkanTransformer {
 
 		for (TranslationUnit tree : trees.values()) {
 			if (tree != null) {
-				tree.getRoot().indexBuildSession(root -> stubUnbindableSamplers(t, tree, root));
+				tree.getRoot().indexBuildSession(root -> bindStorage(tree, root));
 				tree.getRoot().indexBuildSession(root -> emulateShadowSamplers(t, tree, root));
 			}
 		}
@@ -226,65 +228,120 @@ public class VulkanTransformer {
 	}
 
 	/**
-	 * RenderPearl binds only 2D/cube samplers: 3D samplers and storage images (voxel / flood-fill
-	 * lighting, needs the native layer, M3) become a constant of a dummy struct, and overloads of the
-	 * texture/image functions on that struct return zero. Packs read "no data" instead of failing to
-	 * compile. Arrays of such samplers are left alone (and still fail).
+	 * Storage images and SSBOs go into descriptor set 1 (see VulkanStorage), at the binding of their
+	 * name (images) or GL binding point (SSBOs), the same in every program.
 	 */
-	private static void stubUnbindableSamplers(ASTParser t, TranslationUnit tree, Root root) {
-		Set<String> stubTypes = new LinkedHashSet<>();
-		StringBuilder constants = new StringBuilder();
-		List<ExternalDeclaration> toRemove = new ArrayList<>();
+	private static void bindStorage(TranslationUnit tree, Root root) {
+		splitImageDeclarations(tree, root);
 
 		for (DeclarationExternalDeclaration external : root.nodeIndex.get(DeclarationExternalDeclaration.class)) {
-			if (!(external.getDeclaration() instanceof TypeAndInitDeclaration declaration)
-				|| !isUniform(declaration.getType().getTypeQualifier())
-				|| !(declaration.getType().getTypeSpecifier() instanceof BuiltinFixedTypeSpecifier fixed)
-				|| fixed.getArraySpecifier() != null) {
+			if (external.getDeclaration() instanceof TypeAndInitDeclaration declaration && isImage(declaration)) {
+				if (declaration.getMembers().size() != 1 || declaration.getType().getTypeSpecifier().getArraySpecifier() != null
+					|| declaration.getMembers().getFirst().getArraySpecifier() != null) {
+					VulkanUnsupported.once("arrays of images");
+					continue;
+				}
+
+				String name = declaration.getMembers().getFirst().getName().getName();
+				int binding = VulkanStorage.imageBinding(name);
+
+				if (binding < 0) {
+					VulkanUnsupported.once("more than " + VulkanStorage.MAX_IMAGES + " storage images (" + name + ")");
+					continue;
+				}
+
+				setStorageBinding(declaration.getType().getTypeQualifier(), binding);
+			} else if (external.getDeclaration() instanceof InterfaceBlockDeclaration block
+				&& hasStorage(block.getTypeQualifier(), StorageQualifier.StorageType.BUFFER)) {
+				int index = Math.max(0, layoutValue(block.getTypeQualifier(), "binding"));
+				int binding = VulkanStorage.bufferBinding(index);
+
+				if (binding < 0) {
+					VulkanUnsupported.once("shader storage buffer binding " + index);
+					continue;
+				}
+
+				setStorageBinding(block.getTypeQualifier(), binding);
+			}
+		}
+	}
+
+	private static boolean isImage(TypeAndInitDeclaration declaration) {
+		return isUniform(declaration.getType().getTypeQualifier())
+			&& declaration.getType().getTypeSpecifier() instanceof BuiltinFixedTypeSpecifier fixed
+			&& fixed.type.name().contains("IMAGE");
+	}
+
+	/** "uniform image3D a, b;" becomes one declaration per image, so each gets its own binding. */
+	private static void splitImageDeclarations(TranslationUnit tree, Root root) {
+		for (DeclarationExternalDeclaration external : List.copyOf(root.nodeIndex.get(DeclarationExternalDeclaration.class))) {
+			if (!(external.getDeclaration() instanceof TypeAndInitDeclaration declaration) || !isImage(declaration)
+				|| declaration.getMembers().size() < 2) {
 				continue;
 			}
 
-			String stub = stubType(fixed.type);
+			List<DeclarationMember> members = List.copyOf(declaration.getMembers());
+			int index = tree.getChildren().indexOf(external);
 
-			if (stub == null || declaration.getMembers().stream().anyMatch(member -> member.getArraySpecifier() != null)) {
-				continue;
+			for (int i = members.size() - 1; i >= 1; i--) {
+				DeclarationExternalDeclaration copy = external.cloneInto(root);
+				List<DeclarationMember> copyMembers = List.copyOf(((TypeAndInitDeclaration) copy.getDeclaration()).getMembers());
+
+				for (int j = 0; j < copyMembers.size(); j++) {
+					if (j != i) {
+						copyMembers.get(j).detachAndDelete();
+					}
+				}
+
+				tree.getChildren().add(index + 1, copy);
 			}
 
-			stubTypes.add(stub);
-
-			for (DeclarationMember member : declaration.getMembers()) {
-				String name = member.getName().getName();
-				VulkanUnsupported.once("3D samplers / images, reading zero instead (" + name + ")");
-				constants.append("const ").append(stub).append(' ').append(name).append(" = ").append(stub).append("(0);\n");
+			for (int i = 1; i < members.size(); i++) {
+				members.get(i).detachAndDelete();
 			}
+		}
+	}
 
-			toRemove.add(external);
+	/** layout(set = 1, binding = n), replacing a binding the pack gave. */
+	private static void setStorageBinding(TypeQualifier qualifier, int binding) {
+		LayoutQualifier layout = null;
+
+		for (TypeQualifierPart part : qualifier.getParts()) {
+			if (part instanceof LayoutQualifier existing) {
+				layout = existing;
+				break;
+			}
 		}
 
-		if (toRemove.isEmpty()) {
-			return;
+		if (layout == null) {
+			layout = new LayoutQualifier(Stream.empty());
+			qualifier.getChildren().add(0, layout);
 		}
 
-		tree.getChildren().removeAll(toRemove);
-		for (ExternalDeclaration declaration : toRemove) {
-			declaration.detachParent();
+		layout.getParts().removeIf(part -> part instanceof NamedLayoutQualifierPart named
+			&& (named.getName().getName().equals("binding") || named.getName().getName().equals("set")));
+		layout.getParts().add(0, new NamedLayoutQualifierPart(new Identifier("binding"), new LiteralExpression(Type.INT32, binding)));
+		layout.getParts().add(0, new NamedLayoutQualifierPart(new Identifier("set"), new LiteralExpression(Type.INT32, VulkanStorage.SET)));
+	}
+
+	/** The literal value of layout(name = value), or -1. */
+	private static int layoutValue(TypeQualifier qualifier, String name) {
+		if (qualifier == null) {
+			return -1;
 		}
 
-		StringBuilder functions = new StringBuilder();
-
-		// Every declaration is parsed as a node of its own: a string holding several keeps only the first.
-		for (String stub : stubTypes) {
-			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS, "struct " + stub + " { int unused; };");
-			appendStubFunctions(functions, stub);
+		for (TypeQualifierPart part : qualifier.getParts()) {
+			if (part instanceof LayoutQualifier layout) {
+				for (LayoutQualifierPart layoutPart : layout.getParts()) {
+					if (layoutPart instanceof NamedLayoutQualifierPart named && named.getName().getName().equals(name)
+						&& named.getExpression() instanceof LiteralExpression literal) {
+						return (int) literal.getInteger();
+					}
+				}
+			}
 		}
 
-		// The constants are parsed once the structs are in the tree (the parser must know the type names).
-		for (String constant : constants.toString().split("\n")) {
-			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, constant);
-		}
-		for (String function : functions.toString().split("\n")) {
-			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, function);
-		}
+		return -1;
 	}
 
 	/** Texture functions that compare against the reference on a sampler2DShadow, and their emulations below. */
@@ -388,45 +445,6 @@ public class VulkanTransformer {
 		}
 
 		return globals.contains(name);
-	}
-
-	/** IrisStub + result kind (F/I/U) + dimension, or null for samplers RenderPearl can bind. */
-	private static String stubType(BuiltinFixedTypeSpecifier.BuiltinType type) {
-		return switch (type) {
-			case SAMPLER3D, IMAGE3D -> "IrisStubF3";
-			case ISAMPLER3D, IIMAGE3D -> "IrisStubI3";
-			case USAMPLER3D, UIMAGE3D -> "IrisStubU3";
-			case IMAGE2D -> "IrisStubF2";
-			case IIMAGE2D -> "IrisStubI2";
-			case UIMAGE2D -> "IrisStubU2";
-			case IMAGE1D -> "IrisStubF1";
-			case IIMAGE1D -> "IrisStubI1";
-			case UIMAGE1D -> "IrisStubU1";
-			default -> null;
-		};
-	}
-
-	private static void appendStubFunctions(StringBuilder out, String stub) {
-		String prefix = switch (stub.charAt(8)) {
-			case 'I' -> "i";
-			case 'U' -> "u";
-			default -> "";
-		};
-		int dimension = stub.charAt(9) - '0';
-		String result = prefix + "vec4";
-		String zero = result + "(0)";
-		String coord = dimension == 1 ? "float" : "vec" + dimension;
-		String texel = dimension == 1 ? "int" : "ivec" + dimension;
-		String one = texel + "(1)";
-
-		out.append(result).append(" texture(").append(stub).append(" s, ").append(coord).append(" p) { return ").append(zero).append("; }\n");
-		out.append(result).append(" texture(").append(stub).append(" s, ").append(coord).append(" p, float b) { return ").append(zero).append("; }\n");
-		out.append(result).append(" textureLod(").append(stub).append(" s, ").append(coord).append(" p, float l) { return ").append(zero).append("; }\n");
-		out.append(result).append(" texelFetch(").append(stub).append(" s, ").append(texel).append(" p, int l) { return ").append(zero).append("; }\n");
-		out.append(texel).append(" textureSize(").append(stub).append(" s, int l) { return ").append(one).append("; }\n");
-		out.append(result).append(" imageLoad(").append(stub).append(" s, ").append(texel).append(" p) { return ").append(zero).append("; }\n");
-		out.append("void imageStore(").append(stub).append(" s, ").append(texel).append(" p, ").append(result).append(" v) { }\n");
-		out.append(texel).append(" imageSize(").append(stub).append(" s) { return ").append(one).append("; }\n");
 	}
 
 	/**

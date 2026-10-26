@@ -270,13 +270,6 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 		this.customImages = new HashSet<>();
 		for (ImageInformation information : programSet.getPack().getIrisCustomImages()) {
-			if (IrisVulkan.isActive()) {
-				// Image load/store needs the native layer (M3); CUSTOM_IMAGES is reported unsupported,
-				// so packs that check the feature leave these paths off.
-				VulkanUnsupported.once("custom images (" + information.name() + ")");
-				continue;
-			}
-
 			if (information.isRelative()) {
 				customImages.add(new GlImage.Relative(information.name(), information.samplerName(), information.format(), information.internalTextureFormat(), information.type(), information.clear(), information.relativeWidth(), information.relativeHeight(), main.width, main.height));
 			} else {

@@ -5,8 +5,14 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.jetbrains.annotations.Nullable;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VK10;
+import org.lwjgl.vulkan.VkClearColorValue;
+import org.lwjgl.vulkan.VkCommandBuffer;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 
 import org.joml.Vector4f;
 
@@ -32,12 +38,54 @@ public final class VulkanTextures {
 	private VulkanTextures() {
 	}
 
-	/** A texture Iris owns: destroyed again through {@link #delete(int)}. */
+	/**
+	 * A texture Iris owns: destroyed again through {@link #delete(int)}. Render targets are storage images
+	 * too where the format allows it, for packs that write colorimgN / shadowcolorimgN.
+	 */
 	public static int create(String label, int usage, GpuFormat format, int width, int height, int mipLevels) {
 		RenderSystem.assertOnRenderThread();
-		GpuTexture texture = RenderSystem.getDevice().createTexture(label, usage, format, width, height, 1, mipLevels);
+		GpuTexture texture = VulkanRaw.createTexture(label, usage, format, 2, width, height, 1, mipLevels, true);
 		return register(texture, true);
 	}
+
+	/** A pack's custom image (1D / 2D / 3D storage image, sampled too), cleared to zero. */
+	public static int createImage(String label, GpuFormat format, int dimension, int width, int height, int depth) {
+		RenderSystem.assertOnRenderThread();
+		int id = register(VulkanRaw.createTexture(label, IMAGE_USAGE, format, dimension, width, height, depth, 1, true), true);
+		clear(id);
+		return id;
+	}
+
+	/** A new size for a custom image, keeping its id. */
+	public static void replaceImage(int id, String label, GpuFormat format, int dimension, int width, int height, int depth) {
+		replaceWith(id, VulkanRaw.createTexture(label, IMAGE_USAGE, format, dimension, width, height, depth, 1, true));
+		clear(id);
+	}
+
+	/**
+	 * Every mip level to zero (glClearTexImage). Recorded into the frame's command buffer between
+	 * RenderPearl's passes; also works for 3D and integer images, unlike RenderPearl's clear.
+	 */
+	public static void clear(int id) {
+		GpuTexture texture = texture(id);
+
+		if (!(texture instanceof VulkanGpuTexture vulkan)) {
+			return;
+		}
+
+		VkCommandBuffer commandBuffer = VulkanRaw.commandBuffer();
+
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VulkanRaw.barrier(commandBuffer);
+			VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack)
+				.aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(texture.getMipLevels()).baseArrayLayer(0)
+				.layerCount(VulkanRaw.dimension(texture) == 3 ? 1 : texture.getDepthOrLayers());
+			VK10.vkCmdClearColorImage(commandBuffer, vulkan.vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, VkClearColorValue.calloc(stack), range);
+			VulkanRaw.barrier(commandBuffer);
+		}
+	}
+
+	private static final int IMAGE_USAGE = GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_COPY_SRC;
 
 	/**
 	 * GL formats without alpha (RGB16F, RGB8, ...) have an RGBA texture on Vulkan, but GL reads their alpha as 1
@@ -70,6 +118,10 @@ public final class VulkanTextures {
 
 	/** Gives an owned id a new texture (resize), keeping the id the pack's programs already sampled. */
 	public static void replace(int id, String label, int usage, GpuFormat format, int width, int height, int mipLevels) {
+		replaceWith(id, VulkanRaw.createTexture(label, usage, format, 2, width, height, 1, mipLevels, true));
+	}
+
+	private static void replaceWith(int id, GpuTexture texture) {
 		Entry old = BY_ID.get(id);
 
 		if (old == null || !old.owned) {
@@ -79,8 +131,8 @@ public final class VulkanTextures {
 		BY_TEXTURE.remove(old.texture);
 		OPAQUE_ALPHA.remove(old.texture);
 		old.close();
+		VulkanStorage.clear();
 
-		GpuTexture texture = RenderSystem.getDevice().createTexture(label, usage, format, width, height, 1, mipLevels);
 		BY_ID.put(id, new Entry(texture, true));
 		BY_TEXTURE.put(texture, id);
 	}
@@ -92,6 +144,7 @@ public final class VulkanTextures {
 			BY_TEXTURE.remove(entry.texture);
 			OPAQUE_ALPHA.remove(entry.texture);
 			entry.close();
+			VulkanStorage.clear();
 		}
 	}
 
