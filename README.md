@@ -12,12 +12,16 @@
 >   [Releases](https://github.com/laurensanp/iris-vulkan/releases). It replaces regular Iris; it needs
 >   Sodium 0.9.2+ for 26.3. Install and settings: see the
 >   [Iris DLSS Bridge README](https://github.com/laurensanp/iris-dlss#readme).
-> * **Branch**: `vulkan-m2` (current work). Without Iris DLSS Bridge (or on OpenGL) it behaves like
->   regular Iris.
-> * **Works**: gbuffers, deferred, composite, final programs. Tested: Solas 3.8, Complementary
->   Reimagined / Unbound, BSL, MakeUp Ultra Fast.
-> * **Not yet**: shadows (shadow pass), compute shaders, custom / 3D images, geometry and tessellation
->   shaders. Photon, Bliss and Sildur's don't compile yet.
+> * **Branch**: `vulkan-m2` (current work, the default). Without Iris DLSS Bridge (or on OpenGL) it behaves
+>   like regular Iris. The first, abandoned attempt is kept as the tag `archive/vulkan-first-attempt`.
+> * **Works**: gbuffers, deferred, composite, final, shadow pass (shadow maps, emulated hardware shadow
+>   samplers, depth mipmaps), compute shaders, SSBOs, custom 1D/2D/3D images, geometry and tessellation
+>   shaders, colour space conversion. Tested against OpenGL: Solas 3.8 (incl. flood-fill light),
+>   Complementary Reimagined / Unbound, Photon, Bliss, Rethinking Voxels; BSL, MakeUp Ultra Fast and
+>   Sildur's run.
+> * **Not yet**: arrays of images. Voxy LODs work through the separate
+>   [voxy-vulkan](https://github.com/laurensanp/iris-dlss/tree/main/voxy-vulkan) mod, without a shader pack
+>   so far.
 > * **Build**: JDK 25 in `JAVA_HOME`, then `gradlew :fabric:build` (jar in `build/libs`). Test loop and
 >   options: [Iris DLSS Bridge README](https://github.com/laurensanp/iris-dlss#test-loop-in-the-fork).
 >   The Vulkan code is in `common/src/main/java/net/irisshaders/iris/vulkan`; the design is described in
