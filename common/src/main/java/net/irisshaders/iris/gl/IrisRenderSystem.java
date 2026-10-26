@@ -21,6 +21,7 @@ import net.irisshaders.iris.vulkan.VulkanRaw;
 import net.irisshaders.iris.vulkan.VulkanSamplers;
 import net.irisshaders.iris.vulkan.VulkanStorage;
 import net.irisshaders.iris.vulkan.VulkanUnits;
+import net.irisshaders.iris.vulkan.VulkanUnsupported;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
@@ -179,6 +180,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void copyTexImage2D(int target, int level, int internalFormat, int x, int y, int width, int height, int border) {
+		if (IrisVulkan.isActive()) {
+			VulkanUnsupported.once("IrisRenderSystem.copyTexImage2D");
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border);
 	}
@@ -265,6 +270,10 @@ public class IrisRenderSystem {
 	 * Internal API for use when you don't know the target texture. Should use {@link IrisRenderSystem#texParameteriv(int, int, int, int[])} instead unless you know what you're doing!
 	 */
 	public static void texParameterivDirect(int target, int pname, int[] params) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glTexParameteriv(target, pname, params);
 	}
@@ -301,11 +310,19 @@ public class IrisRenderSystem {
 	}
 
 	public static void drawBuffers(int framebuffer, int[] buffers) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		dsaState.drawBuffers(framebuffer, buffers);
 	}
 
 	public static void readBuffer(int framebuffer, int buffer) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		dsaState.readBuffer(framebuffer, buffer);
 	}
@@ -363,11 +380,19 @@ public class IrisRenderSystem {
 	}
 
 	public static void vertexAttrib4f(int index, float v0, float v1, float v2, float v3) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glVertexAttrib4f(index, v0, v1, v2, v3);
 	}
 
 	public static void detachShader(int program, int shader) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glDetachShader(program, shader);
 	}
@@ -489,18 +514,30 @@ public class IrisRenderSystem {
 	}
 
 	public static void disableBufferBlend(int buffer) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glDisablei(GL32C.GL_BLEND, buffer);
 		GlStateManagerAccessor.getBLEND_ENABLE()[buffer] = false;
 	}
 
 	public static void enableBufferBlend(int buffer) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glEnablei(GL32C.GL_BLEND, buffer);
 		GlStateManagerAccessor.getBLEND_ENABLE()[buffer] = true;
 	}
 
 	public static void blendFuncSeparatei(int buffer, int srcRGB, int dstRGB, int srcAlpha, int dstAlpha) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		ARBDrawBuffersBlend.glBlendFuncSeparateiARB(buffer, srcRGB, dstRGB, srcAlpha, dstAlpha);
 	}
@@ -521,6 +558,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void uniformBlockBinding(int program, int uniformBlockIndex, int uniformBlockBinding) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL32C.glUniformBlockBinding(program, uniformBlockIndex, uniformBlockBinding);
 	}
@@ -538,6 +579,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void blitFramebuffer(int source, int dest, int offsetX, int offsetY, int width, int height, int offsetX2, int offsetY2, int width2, int height2, int bufferChoice, int filter) {
+		if (IrisVulkan.isActive()) {
+			VulkanUnsupported.once("IrisRenderSystem.blitFramebuffer");
+			return;
+		}
 		dsaState.blitFramebuffer(source, dest, offsetX, offsetY, width, height, offsetX2, offsetY2, width2, height2, bufferChoice, filter);
 	}
 
@@ -552,6 +597,10 @@ public class IrisRenderSystem {
 	private static int lastTex = -1;
 
 	public static void bindTextureForSetup(int glType, int glId) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		if (glType == GL46C.GL_TEXTURE_2D) {
 			lastTex = GlStateManagerAccessor.getTEXTURES()[GlStateManagerAccessor.getActiveTexture()].binding;
 		}
@@ -559,6 +608,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void restoreTexture() {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		if (lastTex != -1) {
 			GL30C.glBindTexture(GL46C.GL_TEXTURE_2D, lastTex);
 			lastTex = -1;
@@ -672,6 +725,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void setPolygonMode(int mode) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		if (mode != polygonMode) {
 			polygonMode = mode;
 			GL43C.glPolygonMode(GL43C.GL_FRONT_AND_BACK, mode);
@@ -715,6 +772,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void copyImageSubData(int sourceTexture, int target, int mip, int srcX, int srcY, int srcZ, int destTexture, int dstTarget, int dstMip, int dstX, int dstY, int dstZ, int width, int height, int depth) {
+		if (IrisVulkan.isActive()) {
+			VulkanUnsupported.once("IrisRenderSystem.copyImageSubData");
+			return;
+		}
 		GL46C.glCopyImageSubData(sourceTexture, target, mip, srcX, srcY, srcZ, destTexture, dstTarget, dstMip, dstX, dstY, dstZ, width, height, depth);
   }
 
@@ -768,6 +829,10 @@ public class IrisRenderSystem {
 	}
 
 	public static void clearColor(float v, float v1, float v2, float v3) {
+		if (IrisVulkan.isActive()) {
+			// GL state; on Vulkan it is part of the pipeline / render pass.
+			return;
+		}
 		RenderSystem.assertOnRenderThread();
 		GL46C.glClearColor(v, v1, v2, v3);
 	}

@@ -15,16 +15,18 @@ import org.spongepowered.asm.mixin.injection.At;
 import java.util.List;
 
 /**
- * RenderPearl checks that the vertex shader writes every input of the fragment shader. With geometry
- * or tessellation stages in between (VulkanStages) that doesn't hold, so the check sees no interface.
+ * RenderPearl checks that the vertex shader writes every input of the fragment shader and refuses some
+ * types there (structs, which Photon passes between stages). For Iris' programs the check sees no
+ * interface: LayoutTransformer gives both sides matching locations, and with geometry / tessellation
+ * stages in between (VulkanStages) vertex outputs and fragment inputs don't match at all.
  */
 @Mixin(PipelineBuilder.class)
 public class MixinPipelineBuilder_Stages {
 	@WrapOperation(method = "generateBackendCreateInfo", at = @At(value = "INVOKE",
 		target = "Lcom/mojang/renderpearl/frontend/shaders/PipelineBuilder;generateSlotMap(Ljava/util/List;Ljava/lang/String;Lcom/mojang/renderpearl/api/pipeline/ShaderType;)Lit/unimi/dsi/fastutil/ints/Int2ObjectMap;"))
-	private Int2ObjectMap<?> iris$noInterfaceCheckWithMoreStages(List<?> variables, String name, ShaderType type, Operation<Int2ObjectMap<?>> original,
+	private Int2ObjectMap<?> iris$noInterfaceCheckForIris(List<?> variables, String name, ShaderType type, Operation<Int2ObjectMap<?>> original,
 																@Local(argsOnly = true) RenderPipeline pipeline) {
-		if (VulkanStages.get(pipeline.getLocation().toString()) != null) {
+		if (pipeline.getLocation().getNamespace().equals("iris") || VulkanStages.get(pipeline.getLocation().toString()) != null) {
 			return new Int2ObjectOpenHashMap<>();
 		}
 

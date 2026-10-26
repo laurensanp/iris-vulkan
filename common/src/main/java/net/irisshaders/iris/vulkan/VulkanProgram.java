@@ -711,8 +711,8 @@ public final class VulkanProgram {
 		while (matcher.find()) {
 			int output = Integer.parseInt(matcher.group(1));
 			int target = output < outputLocations.length ? outputLocations[output] : -1;
-			// An output without a target (a buffer the pass doesn't have) goes to an unused location; nothing reads it.
-			String replacement = "layout(location = " + (target >= 0 ? target : 15 - output) + ")" + matcher.group(2);
+			// An output without a target (a buffer the pass doesn't have) becomes a plain global; nothing reads it.
+			String replacement = target >= 0 ? "layout(location = " + target + ")" + matcher.group(2) : "";
 			matcher.appendReplacement(result, Matcher.quoteReplacement(replacement));
 		}
 

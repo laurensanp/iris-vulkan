@@ -5,7 +5,18 @@ import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.backend.vulkan.VulkanGpuBuffer;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTexture;
+import net.irisshaders.iris.gl.texture.InternalTextureFormat;
+import net.irisshaders.iris.gl.texture.PixelFormat;
+import net.irisshaders.iris.gl.texture.PixelType;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VkBufferImageCopy;
+
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.system.MemoryStack;
@@ -54,6 +65,106 @@ public final class VulkanTextures {
 		int id = register(VulkanRaw.createTexture(label, IMAGE_USAGE, format, dimension, width, height, depth, 1, true), true);
 		clear(id);
 		return id;
+	}
+
+	/**
+	 * A texture from a pack's raw texture file (glTexImage1D/2D/3D with GL pixel data): the pixels are
+	 * turned into the Vulkan format's layout (three channels widened to four, BGR swapped, float to half
+	 * where needed) and copied in. Returns 0 for layouts that aren't handled.
+	 */
+	public static int createFromPixels(String label, int dimension, int width, int height, int depth, InternalTextureFormat internalFormat,
+									   PixelFormat pixelFormat, PixelType pixelType, byte[] pixels) {
+		GpuFormat format = VulkanFormats.toRenderTarget(internalFormat);
+		ByteBuffer data = convertPixels(format, pixelFormat, pixelType, pixels, width * Math.max(1, height) * Math.max(1, depth));
+
+		if (data == null) {
+			VulkanUnsupported.once("raw texture " + label + " with " + pixelFormat + " / " + pixelType + " data for " + internalFormat);
+			return 0;
+		}
+
+		GpuTexture texture = VulkanRaw.createTexture(label, IMAGE_USAGE, format, dimension, width, height, depth, 1, false);
+		int id = register(texture, true);
+
+		try (MemoryStack stack = MemoryStack.stackPush()) {
+			GpuBufferSlice staging = RenderSystem.getDevice().createCommandEncoder().transientMemory().uploadStaging(data, 16, GpuBuffer.USAGE_COPY_SRC);
+			VkCommandBuffer commandBuffer = VulkanRaw.commandBuffer();
+			VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack).bufferOffset(staging.offset());
+			region.imageSubresource().aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
+			region.imageExtent().set(width, dimension == 1 ? 1 : height, dimension == 3 ? depth : 1);
+			VulkanRaw.barrier(commandBuffer);
+			VK10.vkCmdCopyBufferToImage(commandBuffer, ((VulkanGpuBuffer) staging.buffer()).vkBuffer(), ((VulkanGpuTexture) texture).vkImage(),
+				VK10.VK_IMAGE_LAYOUT_GENERAL, region);
+			VulkanRaw.barrier(commandBuffer);
+		} finally {
+			MemoryUtil.memFree(data);
+		}
+
+		return id;
+	}
+
+	/** {@code pixels} in GL's layout as tightly packed texels of {@code format}, or null if not handled. */
+	@Nullable
+	private static ByteBuffer convertPixels(GpuFormat format, PixelFormat pixelFormat, PixelType pixelType, byte[] pixels, int texels) {
+		String name = format.name();
+		int dstChannels = format.componentCount();
+		int dstSize = name.contains("32") ? 4 : name.contains("16") ? 2 : name.contains("8") ? 1 : -1;
+		int srcChannels = pixelFormat.getComponentCount();
+		int srcSize = pixelType.getByteSize();
+		boolean packed = pixelType.name().contains("_REV") || pixelType.name().matches(".*_\\d+_\\d+.*");
+		boolean halfFromFloat = srcSize == 4 && dstSize == 2 && pixelType == PixelType.FLOAT && name.endsWith("_FLOAT");
+
+		if (dstSize < 0 || packed || (srcSize != dstSize && !halfFromFloat) || pixels.length < texels * srcChannels * srcSize) {
+			return null;
+		}
+
+		ByteBuffer in = ByteBuffer.wrap(pixels).order(ByteOrder.nativeOrder());
+		ByteBuffer out = MemoryUtil.memAlloc(texels * dstChannels * dstSize);
+		boolean bgr = pixelFormat.name().startsWith("BGR");
+
+		for (int texel = 0; texel < texels; texel++) {
+			for (int channel = 0; channel < dstChannels; channel++) {
+				int source = bgr && channel < 3 ? 2 - channel : channel;
+
+				if (source < srcChannels) {
+					int offset = (texel * srcChannels + source) * srcSize;
+
+					if (halfFromFloat) {
+						out.putShort(Float.floatToFloat16(in.getFloat(offset)));
+					} else {
+						for (int b = 0; b < dstSize; b++) {
+							out.put(pixels[offset + b]);
+						}
+					}
+				} else {
+					putComponent(out, name, dstSize, channel == 3);
+				}
+			}
+		}
+
+		return out.flip();
+	}
+
+	/** A missing channel: 0, or "one" for alpha (GL reads absent alpha as 1). */
+	private static void putComponent(ByteBuffer out, String format, int size, boolean one) {
+		long value = 0;
+
+		if (one) {
+			if (format.endsWith("_FLOAT")) {
+				value = size == 4 ? Float.floatToRawIntBits(1.0f) : Float.floatToFloat16(1.0f);
+			} else if (format.endsWith("_UNORM")) {
+				value = (1L << (size * 8)) - 1;
+			} else if (format.endsWith("_SNORM")) {
+				value = (1L << (size * 8 - 1)) - 1;
+			} else {
+				value = 1;
+			}
+		}
+
+		switch (size) {
+			case 1 -> out.put((byte) value);
+			case 2 -> out.putShort((short) value);
+			default -> out.putInt((int) value);
+		}
 	}
 
 	/** A new size for a custom image, keeping its id. */
