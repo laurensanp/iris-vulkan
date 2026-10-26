@@ -208,6 +208,10 @@ public final class VulkanGbuffers {
 
 			if (program instanceof ExtendedShader extended) {
 				shader = extended;
+
+				if (!target.shadow()) {
+					pipeline.noteVulkanGbufferUse(extended.getDrawBuffers());
+				}
 			}
 		}
 

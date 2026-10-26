@@ -6,6 +6,7 @@ import io.github.douira.glsl_transformer.ast.node.type.qualifier.PrecisionQualif
 import io.github.douira.glsl_transformer.ast.node.TranslationUnit;
 import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.InterfaceBlockDeclaration;
+import io.github.douira.glsl_transformer.ast.node.declaration.PrecisionDeclaration;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
@@ -109,6 +110,16 @@ public class VulkanTransformer {
 				// GL ignores precision on parameters; glslang wants every declaration of a function to agree.
 				root.process(root.nodeIndex.getStream(PrecisionQualifier.class)
 					.filter(precision -> precision.getAncestor(FunctionParameter.class) != null), PrecisionQualifier::detachAndDelete);
+				// Default precision ("precision highp float;") would give parameters declared after it a precision
+				// that a prototype before it lacks (Bliss); it means nothing on desktop GPUs.
+				// Packs written for old GLSL define built-ins themselves (Bliss: tanh). GL drivers let that pass,
+				// glslang doesn't; the built-in computes the same.
+				List<ExternalDeclaration> unwanted = tree.getChildren().stream()
+					.filter(external -> external instanceof DeclarationExternalDeclaration declaration && declaration.getDeclaration() instanceof PrecisionDeclaration
+						|| external instanceof FunctionDefinition definition && REDEFINED_BUILTINS.contains(definition.getFunctionPrototype().getName().getName()))
+					.toList();
+				tree.getChildren().removeAll(unwanted);
+				unwanted.forEach(ExternalDeclaration::detachParent);
 
 				// Identifiers that are keywords only in Vulkan GLSL (Bliss names a sampler2D parameter "sampler").
 				for (String keyword : VULKAN_KEYWORDS) {
@@ -138,6 +149,10 @@ public class VulkanTransformer {
 			});
 		}
 	}
+
+	/** Built-in functions packs re-implement for old GLSL versions. */
+	private static final Set<String> REDEFINED_BUILTINS = Set.of("tanh", "sinh", "cosh", "asinh", "acosh", "atanh",
+		"fma", "round", "roundEven", "trunc", "inverse", "transpose", "determinant", "isnan", "isinf");
 
 	/** Type names Vulkan GLSL adds (GL_KHR_vulkan_glsl) that are ordinary identifiers in GL GLSL. */
 	private static final List<String> VULKAN_KEYWORDS = List.of("sampler", "samplerShadow", "subpassInput", "subpassInputMS");

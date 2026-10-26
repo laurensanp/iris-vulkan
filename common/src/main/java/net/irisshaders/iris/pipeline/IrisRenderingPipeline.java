@@ -188,7 +188,9 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	public boolean isBeforeTranslucent;
 	/** Vulkan gbuffers: union of all gbuffers programs' DRAWBUFFERS (see getVulkanGbufferBuffers). */
 	private final TreeSet<Integer> vulkanGbufferBuffers = new TreeSet<>();
-	private int[] vulkanGbufferBufferArray;
+	/** Per phase (before / after translucents): the attached buffers, and those programs were seen writing. */
+	private final int[][] vulkanGbufferBufferArrays = new int[2][];
+	private final TreeSet<Integer>[] vulkanGbufferBuffersUsed = new TreeSet[]{new TreeSet<>(), new TreeSet<>()};
 	private GlFramebuffer vulkanGbuffersBeforeTranslucent;
 	private GlFramebuffer vulkanGbuffersAfterTranslucent;
 	/** Vulkan shadow pass: union of all shadow programs' DRAWBUFFERS (see getVulkanShadowFramebuffer). */
@@ -1149,19 +1151,53 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	 * program writes, in buffer order. A render pass has them all attached; each program writes its own.
 	 */
 	public int[] getVulkanGbufferBuffers() {
-		if (vulkanGbufferBufferArray == null) {
+		int index = isBeforeTranslucent ? 0 : 1;
+
+		if (vulkanGbufferBufferArrays[index] == null) {
 			int max = RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments();
 			int[] buffers = vulkanGbufferBuffers.isEmpty() ? new int[]{0} : vulkanGbufferBuffers.stream().mapToInt(Integer::intValue).toArray();
 
 			if (buffers.length > max) {
-				VulkanUnsupported.once("gbuffers writing more than " + max + " colortex buffers in total (" + Arrays.toString(buffers) + ")");
-				buffers = Arrays.copyOf(buffers, max);
+				// More buffers than a render pass can have: each phase gets the buffers its programs were seen
+				// writing (Bliss: terrain and water write different ones), see noteVulkanGbufferUse.
+				TreeSet<Integer> used = vulkanGbufferBuffersUsed[index];
+				int[] phase = used.isEmpty() ? buffers : used.stream().mapToInt(Integer::intValue).toArray();
+
+				if (phase.length > max) {
+					VulkanUnsupported.once("gbuffers writing more than " + max + " colortex buffers in one phase (" + Arrays.toString(phase) + ")");
+				}
+
+				buffers = Arrays.copyOf(phase, Math.min(max, phase.length));
 			}
 
-			vulkanGbufferBufferArray = buffers;
+			vulkanGbufferBufferArrays[index] = buffers;
 		}
 
-		return vulkanGbufferBufferArray;
+		return vulkanGbufferBufferArrays[index];
+	}
+
+	/**
+	 * Vulkan: a gbuffers program drawn in the current phase. Only matters when the programs write more
+	 * buffers than a render pass can have; then a buffer the phase's passes don't have yet makes the next
+	 * passes of that phase get it.
+	 */
+	public void noteVulkanGbufferUse(int[] drawBuffers) {
+		int index = isBeforeTranslucent ? 0 : 1;
+		boolean added = false;
+
+		for (int buffer : drawBuffers) {
+			added |= vulkanGbufferBuffersUsed[index].add(buffer);
+		}
+
+		if (added && vulkanGbufferBuffers.size() > RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments()) {
+			vulkanGbufferBufferArrays[index] = null;
+
+			if (index == 0) {
+				vulkanGbuffersBeforeTranslucent = null;
+			} else {
+				vulkanGbuffersAfterTranslucent = null;
+			}
+		}
 	}
 
 	/** Vulkan: views of {@link #getVulkanGbufferBuffers()} for the current phase (before / after translucents). */
