@@ -17,6 +17,7 @@ import net.irisshaders.iris.vulkan.IrisVulkan;
 import net.irisshaders.iris.vulkan.VulkanBuffers;
 import net.irisshaders.iris.vulkan.VulkanDraw;
 import net.irisshaders.iris.vulkan.VulkanProgram;
+import net.irisshaders.iris.vulkan.VulkanRaw;
 import net.irisshaders.iris.vulkan.VulkanSamplers;
 import net.irisshaders.iris.vulkan.VulkanStorage;
 import net.irisshaders.iris.vulkan.VulkanUnits;
@@ -71,7 +72,7 @@ public class IrisRenderSystem {
 			hasMultibind = false;
 			perspectiveProjectionMatrixBuffer = new ProjectionMatrixBuffer("Iris shadow map projection");
 			supportsCompute = true; // raw Vulkan compute pipelines (VulkanCompute)
-			supportsTesselation = false;
+			supportsTesselation = VulkanRaw.tessellationShader; // stages added to RenderPearl pipelines (VulkanStages)
 			samplers = new int[SamplerLimits.get().getMaxTextureUnits()];
 			Iris.logger.info("Iris is running on the Vulkan backend.");
 			return;

@@ -69,6 +69,10 @@ public final class VulkanTextures {
 	public static void clear(int id) {
 		GpuTexture texture = texture(id);
 
+		if (VulkanRaw.debug("noclear")) {
+			return;
+		}
+
 		if (!(texture instanceof VulkanGpuTexture vulkan)) {
 			return;
 		}
@@ -76,12 +80,14 @@ public final class VulkanTextures {
 		VkCommandBuffer commandBuffer = VulkanRaw.commandBuffer();
 
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VulkanRaw.checkpoint(commandBuffer, true, "Iris clear " + texture.getLabel());
 			VulkanRaw.barrier(commandBuffer);
 			VkImageSubresourceRange range = VkImageSubresourceRange.calloc(stack)
 				.aspectMask(VK10.VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(texture.getMipLevels()).baseArrayLayer(0)
 				.layerCount(VulkanRaw.dimension(texture) == 3 ? 1 : texture.getDepthOrLayers());
 			VK10.vkCmdClearColorImage(commandBuffer, vulkan.vkImage(), VK10.VK_IMAGE_LAYOUT_GENERAL, VkClearColorValue.calloc(stack), range);
 			VulkanRaw.barrier(commandBuffer);
+			VulkanRaw.checkpoint(commandBuffer, false, "Iris clear " + texture.getLabel());
 		}
 	}
 

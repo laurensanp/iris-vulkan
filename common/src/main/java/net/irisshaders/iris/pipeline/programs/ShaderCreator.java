@@ -189,13 +189,9 @@ public class ShaderCreator {
 
 	public static PartialShader link(String name, String vertex, String geometry, String tessControl, String tessEval, String fragment, VertexFormat vertexFormat, boolean isFallback) throws ShaderCompileException {
 		if (IrisVulkan.isActive()) {
-			if (tessControl != null || tessEval != null) {
-				// RenderPearl has vertex and fragment stages only; tessellation needs the native layer (M3).
-				throw new ShaderCompileException(name, "tessellation shaders are not supported on Vulkan yet");
-			}
-
-			// Vertex attributes are matched by name when the pipeline is built (VulkanProgram.compileGbuffer).
-			return new PartialShader(VulkanProgram.create(name, vertex, geometry, fragment), -1, -1, -1, -1, -1);
+			// Vertex attributes are matched by name when the pipeline is built (VulkanProgram.compileGbuffer);
+			// geometry / tessellation stages are added to RenderPearl's pipelines (VulkanStages).
+			return new PartialShader(VulkanProgram.create(name, vertex, tessControl, tessEval, geometry, fragment), -1, -1, -1, -1, -1);
 		}
 
 		int i = GlStateManager.glCreateProgram();

@@ -6,6 +6,7 @@ import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.vulkan.VulkanCommandEncoder;
 import com.mojang.renderpearl.backend.vulkan.VulkanConst;
 import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
+import com.mojang.renderpearl.backend.vulkan.checkpoints.CheckpointExtension;
 import net.irisshaders.iris.mixin.GpuDeviceAccessor;
 import net.irisshaders.iris.mixin.vulkan.VulkanCommandEncoderAccessor;
 import org.lwjgl.system.MemoryStack;
@@ -111,6 +112,22 @@ public final class VulkanRaw {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			VulkanCommandEncoder.memoryBarrier(commandBuffer, stack);
 		}
+	}
+
+	/**
+	 * A GPU crash checkpoint around raw work, like RenderPearl's around its passes: after a device loss
+	 * the crash report names the last one the GPU passed.
+	 */
+	public static void checkpoint(VkCommandBuffer commandBuffer, boolean begin, String label) {
+		((VulkanCommandEncoderAccessor) encoder()).iris$checkpointStorage().recordCheckpoint(commandBuffer,
+			begin ? CheckpointExtension.CheckpointType.BEGIN_RENDER_PASS : CheckpointExtension.CheckpointType.END_RENDER_PASS, () -> label);
+	}
+
+	private static final java.util.Set<String> DEBUG = java.util.Set.of(System.getProperty("iris.vulkanDebug", "").split(","));
+
+	/** Dev switches (-Diris.vulkanDebug=nocompute,...) that turn parts of the raw work off. */
+	public static boolean debug(String flag) {
+		return DEBUG.contains(flag);
 	}
 
 	/** Whether images of this format can be storage images (imageLoad / imageStore). */

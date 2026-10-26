@@ -92,6 +92,8 @@ public final class VulkanProgram {
 	@Nullable
 	private final VulkanCompute compute;
 	private final int[] localSize;
+	/** Geometry / tessellation stages (see VulkanStages). */
+	private final VulkanStages.Extra extra;
 	private int nextVariant;
 
 	private VulkanProgram(int id, String name, String computeSource) {
@@ -100,6 +102,7 @@ public final class VulkanProgram {
 		this.location = Identifier.fromNamespaceAndPath("iris", "vk/" + sanitize(name) + "_" + id);
 		this.vertex = null;
 		this.fragment = null;
+		this.extra = new VulkanStages.Extra(null, null, null);
 		this.layout = VulkanUniformLayout.parse(computeSource);
 		this.storageBindings = storageBindings(computeSource);
 		this.compute = VulkanCompute.create(name, computeSource, storageBindings.length > 0);
@@ -114,7 +117,7 @@ public final class VulkanProgram {
 		layout.writeDefaults(uniforms);
 	}
 
-	private VulkanProgram(int id, String name, String vertex, String fragment) {
+	private VulkanProgram(int id, String name, String vertex, VulkanStages.Extra extra, String fragment) {
 		this.compute = null;
 		this.localSize = new int[]{1, 1, 1};
 		this.id = id;
@@ -122,6 +125,7 @@ public final class VulkanProgram {
 		this.location = Identifier.fromNamespaceAndPath("iris", "vk/" + sanitize(name) + "_" + id);
 		this.vertex = withPushConstants(withSeparateShaderObjects(vertex));
 		this.fragment = withPushConstants(withSeparateShaderObjects(fragment));
+		this.extra = extra;
 
 		VulkanUniformLayout fromVertex = VulkanUniformLayout.parse(vertex);
 		this.layout = fromVertex.isEmpty() ? VulkanUniformLayout.parse(fragment) : fromVertex;
@@ -133,7 +137,7 @@ public final class VulkanProgram {
 		this.samplers = List.copyOf(samplerNames);
 		this.samplerUnits = new int[samplers.size()];
 
-		this.storageBindings = storageBindings(this.vertex, this.fragment);
+		this.storageBindings = storageBindings(this.vertex, this.fragment, extra.tessControl(), extra.tessEval(), extra.geometry());
 
 		this.uniforms = MemoryUtil.memCalloc(layout.size());
 		layout.writeDefaults(uniforms);
@@ -141,14 +145,27 @@ public final class VulkanProgram {
 
 	/** glCreateProgram + attach + link: returns the program "name". */
 	public static int create(String name, String vertex, @Nullable String geometry, String fragment) {
-		if (geometry != null) {
-			// RenderPearl only has vertex and fragment stages; geometry shaders come with the native layer (M3).
-			throw new IllegalStateException("Program " + name + " uses a geometry shader, which is not supported on Vulkan yet");
-		}
+		return create(name, vertex, null, null, geometry, fragment);
+	}
 
+	/** With geometry / tessellation stages, which RenderPearl gets added to its pipelines (VulkanStages). */
+	public static int create(String name, String vertex, @Nullable String tessControl, @Nullable String tessEval, @Nullable String geometry, String fragment) {
 		int id = nextId++;
-		PROGRAMS.put(id, new VulkanProgram(id, name, vertex, fragment));
+		VulkanStages.Extra extra = new VulkanStages.Extra(prepare(tessControl), prepare(tessEval), prepare(geometry));
+		PROGRAMS.put(id, new VulkanProgram(id, name, vertex, extra, fragment));
 		return id;
+	}
+
+	@Nullable
+	private static String prepare(@Nullable String source) {
+		return source == null ? null : withPushConstants(withSeparateShaderObjects(source));
+	}
+
+	/** Lets RenderPearl's pipeline of this name get the extra stages. */
+	private void registerStages(String pipelineName) {
+		if (!extra.isEmpty()) {
+			VulkanStages.register(pipelineName, extra);
+		}
 	}
 
 	/** A compute program (glCreateShader(GL_COMPUTE_SHADER) + link). */
@@ -167,6 +184,10 @@ public final class VulkanProgram {
 	public void dispatch(int x, int y, int z, long indirectBuffer, long indirectOffset) {
 		if (compute == null) {
 			throw new IllegalStateException("Program " + name + " is not a compute program");
+		}
+
+		if (VulkanRaw.debug("nocompute")) {
+			return;
 		}
 
 		VkCommandBuffer commandBuffer = VulkanRaw.commandBuffer();
@@ -612,6 +633,8 @@ public final class VulkanProgram {
 			VulkanStorage.markPipeline(variantLocation.toString());
 		}
 
+		registerStages(variantLocation.toString());
+
 		CompiledRenderPipeline pipeline = RenderSystem.getDevice()
 			.compilePipeline(builder.build(), new VariantSource(variantVertex, variantFragment), Runnable::run).join().finishCompile();
 
@@ -746,6 +769,8 @@ public final class VulkanProgram {
 				throw new IllegalStateException("Shader compilation failed for " + name + ": " + e.getMessage(), e);
 			}
 
+			// Samplers only a geometry / tessellation stage reads go into the bind group layout too.
+			names.addAll(VulkanStages.descriptorNames(location.toString(), extra));
 			return names;
 		}
 	}
@@ -781,6 +806,8 @@ public final class VulkanProgram {
 		if (usesStorage()) {
 			VulkanStorage.markPipeline(location.toString());
 		}
+
+		registerStages(location.toString());
 
 		// RenderPearl logs compile errors and returns a placeholder instead of throwing.
 		CompiledRenderPipeline pipeline = RenderSystem.getDevice().compilePipeline(builder.build(), new Source(), Runnable::run).join().finishCompile();

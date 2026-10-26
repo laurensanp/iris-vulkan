@@ -125,6 +125,14 @@ loom {
             if (project.hasProperty("testPitch")) {
                 vmArg("-Diris.vulkanTest.pitch=" + project.property("testPitch").toString())
             }
+            // -PdlssOff: Iris DLSS turns DLSS off once in the world but the game stays on Vulkan (compare packs with OpenGL).
+            if (project.hasProperty("dlssOff")) {
+                vmArg("-Diris-dlss.devNoDlss=true")
+            }
+            // -PvkDebug=nocompute,noclear,... turns parts of the raw Vulkan work off (VulkanRaw.debug) to narrow down GPU crashes.
+            if (project.hasProperty("vkDebug")) {
+                vmArg("-Diris.vulkanDebug=" + project.property("vkDebug").toString())
+            }
             // -PdlssBenchmark cycles Iris DLSS' modes once in the world and logs fps; -PwindowSize=1920x1080.
             if (project.hasProperty("dlssBenchmark")) {
                 vmArg("-Diris-dlss.benchmark=true")

@@ -41,13 +41,15 @@ public final class VulkanCompute {
 	private static final int VK_PIPELINE_BIND_POINT_COMPUTE = 1;
 
 	/** Set 0 binding of each sampler / the uniform block, in reflection order. */
+	private final String name;
 	private final Map<String, Integer> bindings;
 	private final boolean storage;
 	private final long setLayout;
 	private final long pipelineLayout;
 	private final long pipeline;
 
-	private VulkanCompute(Map<String, Integer> bindings, boolean storage, long setLayout, long pipelineLayout, long pipeline) {
+	private VulkanCompute(String name, Map<String, Integer> bindings, boolean storage, long setLayout, long pipelineLayout, long pipeline) {
+		this.name = name;
 		this.bindings = bindings;
 		this.storage = storage;
 		this.setLayout = setLayout;
@@ -57,7 +59,7 @@ public final class VulkanCompute {
 
 	/** Compiles and reflects; throws with the shaderc message on errors (Iris reports it like a link error). */
 	public static VulkanCompute create(String name, String source, boolean storage) {
-		ByteBuffer spv = compile(name, source);
+		ByteBuffer spv = compile(name, source, Shaderc.shaderc_compute_shader);
 
 		try {
 			Map<String, Integer> bindings = reflect(spv);
@@ -92,7 +94,7 @@ public final class VulkanCompute {
 				VK10.vkDestroyShaderModule(VulkanRaw.vkDevice(), module, null);
 				check(result, name);
 
-				return new VulkanCompute(bindings, storage, setLayout, pipelineLayout, handle.get(0));
+				return new VulkanCompute(name, bindings, storage, setLayout, pipelineLayout, handle.get(0));
 			}
 		} finally {
 			MemoryUtil.memFree(spv);
@@ -114,6 +116,7 @@ public final class VulkanCompute {
 	public void dispatch(VkCommandBuffer commandBuffer, Map<String, long[]> resources, long storageSet, int x, int y, int z,
 						 long indirectBuffer, long indirectOffset) {
 		try (MemoryStack stack = MemoryStack.stackPush()) {
+			VulkanRaw.checkpoint(commandBuffer, true, "Iris compute " + name);
 			VulkanRaw.barrier(commandBuffer);
 			VK10.vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
@@ -155,6 +158,7 @@ public final class VulkanCompute {
 			}
 
 			VulkanRaw.barrier(commandBuffer);
+			VulkanRaw.checkpoint(commandBuffer, false, "Iris compute " + name);
 		}
 	}
 
@@ -175,8 +179,8 @@ public final class VulkanCompute {
 		return name.equals(VulkanUniformLayout.BLOCK_NAME);
 	}
 
-	/** GLSL compute shader to SPIR-V for Vulkan 1.2; set 0 bindings are assigned by shaderc. */
-	private static ByteBuffer compile(String name, String source) {
+	/** GLSL to SPIR-V for Vulkan 1.2 ({@code kind}: a shaderc_*_shader); set 0 bindings are assigned by shaderc. */
+	static ByteBuffer compile(String name, String source, int kind) {
 		long compiler = Shaderc.shaderc_compiler_initialize();
 		long options = Shaderc.shaderc_compile_options_initialize();
 
@@ -184,13 +188,13 @@ public final class VulkanCompute {
 			Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
 			Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
 			Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
-			long result = Shaderc.shaderc_compile_into_spv(compiler, source, Shaderc.shaderc_compute_shader, name, "main", options);
+			long result = Shaderc.shaderc_compile_into_spv(compiler, source, kind, name, "main", options);
 
 			try {
 				if (Shaderc.shaderc_result_get_compilation_status(result) != Shaderc.shaderc_compilation_status_success) {
 					String message = Shaderc.shaderc_result_get_error_message(result);
-					Iris.logger.error("Failed to compile Vulkan compute program {}:\n{}\n--- source\n{}", name, message, source);
-					throw new IllegalStateException("Compute shader compilation failed for " + name + ": " + message);
+					Iris.logger.error("Failed to compile Vulkan shader {}:\n{}\n--- source\n{}", name, message, source);
+					throw new IllegalStateException("Shader compilation failed for " + name + ": " + message);
 				}
 
 				ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
@@ -207,6 +211,11 @@ public final class VulkanCompute {
 	}
 
 	/** Set 0 descriptors by name (set 1 is hidden by MixinSPIRVModule_Storage). */
+	/**
+	 * Gives every set 0 descriptor its own binding, in reflection order, and writes them into {@code spv}.
+	 * shaderc assigns bindings only to resources the shader uses; declared but unused samplers would all
+	 * sit at binding 0 next to the uniform block. RenderPearl renumbers its pipelines' descriptors the same way.
+	 */
 	private static Map<String, Integer> reflect(ByteBuffer spv) {
 		ByteBuffer copy = MemoryUtil.memAlloc(spv.remaining());
 		copy.put(spv.duplicate()).flip();
@@ -214,8 +223,15 @@ public final class VulkanCompute {
 
 		try (SpvModule module = new SPIRVModule(copy, ShaderType.FRAGMENT)) {
 			for (SpvModule.Reflection.Descriptor descriptor : module.reflect().descriptors()) {
-				bindings.put(descriptor.name(), descriptor.binding());
+				if (!bindings.containsKey(descriptor.name())) {
+					bindings.put(descriptor.name(), bindings.size());
+				}
+
+				descriptor.binding(bindings.get(descriptor.name()));
+				descriptor.descriptorSetIndex(0);
 			}
+
+			MemoryUtil.memCopy(MemoryUtil.memAddress(module.spv()), MemoryUtil.memAddress(spv), spv.remaining());
 		} catch (ShaderCompileException e) {
 			throw new IllegalStateException("Couldn't reflect compute shader: " + e.getMessage(), e);
 		}

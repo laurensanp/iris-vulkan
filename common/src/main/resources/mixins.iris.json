@@ -17,6 +17,8 @@
     "vulkan.MixinVulkanRenderPipeline_Storage",
     "vulkan.MixinVulkanRenderPass_Storage",
     "vulkan.MixinFrontendGpuDevice_Textures",
+    "vulkan.MixinPipelineBuilder_Stages",
+    "vulkan.MixinVulkanRenderPipeline_Stages",
     "vulkan.MixinFrontendRenderPass_Gbuffers",
     "vulkan.MixinMinecraft_VulkanTestCapture",
     "vulkan.MixinTitleScreen_VulkanTestWorld",
