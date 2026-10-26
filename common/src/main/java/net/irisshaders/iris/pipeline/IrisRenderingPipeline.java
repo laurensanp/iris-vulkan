@@ -191,6 +191,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	private int[] vulkanGbufferBufferArray;
 	private GlFramebuffer vulkanGbuffersBeforeTranslucent;
 	private GlFramebuffer vulkanGbuffersAfterTranslucent;
+	/** Vulkan shadow pass: union of all shadow programs' DRAWBUFFERS (see getVulkanShadowFramebuffer). */
+	private final TreeSet<Integer> vulkanShadowBuffers = new TreeSet<>();
+	private int[] vulkanShadowBufferArray;
+	private GlFramebuffer vulkanShadowFramebuffer;
 	private boolean initializedBlockIds;
 	private ShaderStorageBufferHolder shaderStorageBufferHolder;
 	private ShadowRenderTargets shadowRenderTargets;
@@ -427,12 +431,6 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 
 		ShaderLoadingMap loadingMap = new ShaderLoadingMap((key, patchType) -> {
-			if (IrisVulkan.isActive() && key.isShadow()) {
-				// Shadow programs come with the shadow pass (M3).
-				VulkanUnsupported.once("shadow pass programs");
-				return null;
-			}
-
 			try {
 				if (key.isShadow()) {
 					return createShadowShader(key.getName(), resolver.resolve(key.getProgram()), key, patchType);
@@ -763,6 +761,11 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 	}
 
 	private ShaderSupplier createFallbackShadowShader(String name, ShaderKey key) throws IOException {
+		if (IrisVulkan.isActive()) {
+			// Synthesized GL GLSL, like createFallbackShader; on Vulkan the draw writes shadow depth with its original shaders.
+			return null;
+		}
+
 		ShaderSupplier shader = ShaderCreator.createFallbackShadow(name, key, shadowTargetsSupplier,
 			key.getAlphaTest(), key.getVertexFormat(), BlendModeOverride.OFF, this, key.getFogMode(),
 			key == ShaderKey.GLINT, key.isText(), key.hasDiffuseLighting(), key.isIntensity(), key.shouldIgnoreLightmap());
@@ -777,6 +780,10 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		ShaderAttributeInputs inputs = new ShaderAttributeInputs(vertexFormat, isFullbright, isLines, false, isText, isIE);
 
 		Supplier<ImmutableSet<Integer>> flipped = () -> flippedBeforeShadow;
+
+		for (int buffer : source.getDirectives().hasUnknownDrawBuffers() ? new int[]{0, 1} : source.getDirectives().getDrawBuffers()) {
+			vulkanShadowBuffers.add(buffer);
+		}
 
 		ShaderSupplier extendedShader = ShaderCreator.createShadow(this, name, key, source, programId, shadowTargetsSupplier,
 			fallbackAlpha, vertexFormat, inputs, updateNotifier, this, flipped, FogMode.PER_VERTEX, isIntensity, isFullbright, true, isLines, customUniforms, patchType);
@@ -1077,9 +1084,7 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 	@Override
 	public void renderShadows(LevelRendererAccessor worldRenderer, Camera playerCamera, CameraRenderState renderState) {
-		if (shadowRenderer != null && IrisVulkan.isActive()) {
-			VulkanUnsupported.once("shadow pass");
-		} else if (shadowRenderer != null) {
+		if (shadowRenderer != null) {
 			this.shadowRenderer.renderShadows(worldRenderer, playerCamera, renderState);
 		}
 
@@ -1181,6 +1186,40 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		}
 
 		return vulkanGbuffersAfterTranslucent.vulkanColorViews();
+	}
+
+	/**
+	 * Vulkan shadow pass: the shadowcolor buffers shadow render passes write (see VulkanGbuffers), the ones
+	 * any shadow program writes, in buffer order.
+	 */
+	public int[] getVulkanShadowBuffers() {
+		if (vulkanShadowBufferArray == null) {
+			int max = RenderSystem.getDevice().getDeviceInfo().limits().maxColorAttachments();
+			int[] buffers = vulkanShadowBuffers.isEmpty() ? new int[]{0} : vulkanShadowBuffers.stream().mapToInt(Integer::intValue).toArray();
+
+			if (buffers.length > max) {
+				VulkanUnsupported.once("shadow programs writing more than " + max + " shadowcolor buffers in total (" + Arrays.toString(buffers) + ")");
+				buffers = Arrays.copyOf(buffers, max);
+			}
+
+			vulkanShadowBufferArray = buffers;
+		}
+
+		return vulkanShadowBufferArray;
+	}
+
+	/** Vulkan shadow pass: {@link #getVulkanShadowBuffers()} plus shadowtex0, or null without shadow targets. */
+	@Nullable
+	public GlFramebuffer getVulkanShadowFramebuffer() {
+		if (shadowRenderTargets == null) {
+			return null;
+		}
+
+		if (vulkanShadowFramebuffer == null) {
+			vulkanShadowFramebuffer = shadowRenderTargets.createShadowFramebuffer(ImmutableSet.of(), getVulkanShadowBuffers());
+		}
+
+		return vulkanShadowFramebuffer;
 	}
 
 	@Override

@@ -103,6 +103,12 @@ public final class VulkanDraw {
 			return;
 		}
 
+		if (gpuTexture.getFormat().hasDepthAspect()) {
+			// The blit renders into colour attachments; depth mipmaps (shadowtex0 with mipmaps) need a depth-writing variant.
+			VulkanUnsupported.once("mipmaps of depth textures (" + gpuTexture.getLabel() + ")");
+			return;
+		}
+
 		for (int level = 1; level < gpuTexture.getMipLevels(); level++) {
 			blit(VulkanTextures.levelView(texture, level - 1), VulkanTextures.levelView(texture, level),
 				gpuTexture.getWidth(level), gpuTexture.getHeight(level));

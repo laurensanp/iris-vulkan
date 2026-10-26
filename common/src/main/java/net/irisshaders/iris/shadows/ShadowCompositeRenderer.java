@@ -9,7 +9,10 @@ import com.mojang.renderpearl.backend.opengl.GlStateManager;
 import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
+import net.irisshaders.iris.vulkan.IrisVulkan;
+import net.irisshaders.iris.vulkan.VulkanDraw;
 import net.irisshaders.iris.vulkan.VulkanUnsupported;
+import net.irisshaders.iris.vertices.ImmediateState;
 import net.irisshaders.iris.features.FeatureFlags;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
@@ -50,6 +53,7 @@ import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
 import org.lwjgl.opengl.GL43C;
 
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -193,6 +197,11 @@ public class ShadowCompositeRenderer {
 	}
 
 	public void renderAll() {
+		if (IrisVulkan.isActive()) {
+			renderAllVulkan();
+			return;
+		}
+
 		GpuBuffer indices = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).getBuffer(6);
 		com.mojang.renderpearl.api.pipeline.IndexType type = RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS).type();
 
@@ -266,6 +275,38 @@ public class ShadowCompositeRenderer {
 		 */
 
 		GlStateManager._activeTexture(GL15C.GL_TEXTURE0);
+	}
+
+	/** Like CompositeRenderer.renderAllVulkan: one render pass per program, compute passes skipped. */
+	private void renderAllVulkan() {
+		ImmediateState.temporarilyIgnorePass = true;
+
+		for (Pass pass : passes) {
+			if (pass.computes != null && Arrays.stream(pass.computes).anyMatch(Objects::nonNull)) {
+				VulkanUnsupported.once("compute shaders (" + pass.name + ")");
+			}
+
+			if (pass instanceof ComputeOnlyPass) {
+				continue;
+			}
+
+			for (int index : pass.mipmappedBuffers) {
+				setupMipmapping(renderTargets.get(index), pass.stageReadsFromAlt.contains(index));
+			}
+
+			int resolution = renderTargets.getResolution();
+			int x = (int) (resolution * pass.viewportScale.viewportX());
+			int y = (int) (resolution * pass.viewportScale.viewportY());
+			int size = (int) (resolution * pass.viewportScale.scale());
+
+			pass.program.use();
+			this.customUniforms.push(pass.program);
+			VulkanDraw.fullscreen(pass.name, pass.program.getProgramId(), pass.framebuffer, x, y, size, size, pass.blendModeOverride);
+		}
+
+		Program.unbind();
+
+		ImmediateState.temporarilyIgnorePass = false;
 	}
 
 	// TODO: Don't just copy this from DeferredWorldRenderingPipeline

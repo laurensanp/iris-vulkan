@@ -1,9 +1,11 @@
 package net.irisshaders.iris.vulkan;
 
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.mojang.renderpearl.api.vertex.VertexFormatElement;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -28,7 +30,13 @@ public final class VulkanPipelines {
 
 	/** {@code source} with other vertex formats and color targets; shaders, defines and the rest stay. */
 	public static RenderPipeline copy(RenderPipeline source, List<VertexFormat> vertexFormats, List<ColorTargetState> colorTargets) {
-		return new Copy(source, vertexFormats.toArray(VertexFormat[]::new), colorTargets.toArray(ColorTargetState[]::new));
+		return copy(source, vertexFormats, colorTargets, source.getDepthStencilState(), source.isCull());
+	}
+
+	/** The same with another depth state (null: no depth test) and culling. */
+	public static RenderPipeline copy(RenderPipeline source, List<VertexFormat> vertexFormats, List<ColorTargetState> colorTargets,
+									  @Nullable DepthStencilState depthState, boolean cull) {
+		return new Copy(source, vertexFormats.toArray(VertexFormat[]::new), colorTargets.toArray(ColorTargetState[]::new), depthState, cull);
 	}
 
 	/** The same vertex layout with the elements renamed (RenderPearl matches attributes to shader inputs by name). */
@@ -49,9 +57,9 @@ public final class VulkanPipelines {
 	}
 
 	private static final class Copy extends RenderPipeline {
-		private Copy(RenderPipeline source, VertexFormat[] vertexFormats, ColorTargetState[] colorTargets) {
+		private Copy(RenderPipeline source, VertexFormat[] vertexFormats, ColorTargetState[] colorTargets, @Nullable DepthStencilState depthState, boolean cull) {
 			super(source.getLocation(), source.getShaders(), source.getShaderDefines(), source.getBindGroupLayouts(), colorTargets,
-				source.getDepthStencilState(), source.getPolygonMode(), source.isCull(), vertexFormats, source.getPrimitiveTopology(),
+				depthState, source.getPolygonMode(), cull, vertexFormats, source.getPrimitiveTopology(),
 				source.pushConstantSize(), source.getSortKey());
 		}
 	}

@@ -383,9 +383,10 @@ public class ShaderCreator {
 
         VertexFormat finalVertexFormat = vertexFormat;
         return new ShaderSupplier(shaderKey, id, () -> {
-			GlFramebuffer framebuffer = shadowSupplier.get().createShadowFramebuffer(ImmutableSet.of(), source.getDirectives().hasUnknownDrawBuffers() ? new int[]{0, 1} : source.getDirectives().getDrawBuffers());
+			int[] drawBuffers = source.getDirectives().hasUnknownDrawBuffers() ? new int[]{0, 1} : source.getDirectives().getDrawBuffers();
+			GlFramebuffer framebuffer = shadowSupplier.get().createShadowFramebuffer(ImmutableSet.of(), drawBuffers);
 			try {
-				return new ExtendedShader(id.getFinally(), name, finalVertexFormat, tessControl != null || tessEval != null, framebuffer, framebuffer, blendModeOverride, alpha, uniforms -> {
+				ExtendedShader shader = new ExtendedShader(id.getFinally(), name, finalVertexFormat, tessControl != null || tessEval != null, framebuffer, framebuffer, blendModeOverride, alpha, uniforms -> {
 					CommonUniforms.addDynamicUniforms(uniforms, FogMode.PER_VERTEX);
 					customUniforms.assignTo(uniforms);
 					BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniforms);
@@ -393,6 +394,8 @@ public class ShaderCreator {
 				}, (samplerHolder, imageHolder) -> {
 					parent.addGbufferOrShadowSamplers(samplerHolder, imageHolder, flipped, isShadowPass, inputs.hasTex(), inputs.hasLight(), inputs.hasOverlay());
 				}, shaderKey, parent, overrides, customUniforms, patchType);
+				shader.setDrawBuffers(drawBuffers);
+				return shader;
 			} catch (IOException e) {
 				throw new RuntimeException(e);
 			}

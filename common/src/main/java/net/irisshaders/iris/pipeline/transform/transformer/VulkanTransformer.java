@@ -8,6 +8,10 @@ import io.github.douira.glsl_transformer.ast.node.declaration.DeclarationMember;
 import io.github.douira.glsl_transformer.ast.node.declaration.TypeAndInitDeclaration;
 import io.github.douira.glsl_transformer.ast.node.expression.Expression;
 import io.github.douira.glsl_transformer.ast.node.expression.LiteralExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.ReferenceExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.FunctionCallExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.GroupingExpression;
+import io.github.douira.glsl_transformer.ast.node.external_declaration.FunctionDefinition;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.LayoutQualifier;
@@ -84,6 +88,7 @@ public class VulkanTransformer {
 		for (TranslationUnit tree : trees.values()) {
 			if (tree != null) {
 				tree.getRoot().indexBuildSession(root -> stubUnbindableSamplers(t, tree, root));
+				tree.getRoot().indexBuildSession(root -> emulateShadowSamplers(t, tree, root));
 			}
 		}
 
@@ -280,6 +285,109 @@ public class VulkanTransformer {
 		for (String function : functions.toString().split("\n")) {
 			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, function);
 		}
+	}
+
+	/** Texture functions that compare against the reference on a sampler2DShadow, and their emulations below. */
+	private static final Set<String> SHADOW_FUNCTIONS = Set.of("texture", "textureLod", "textureOffset", "textureLodOffset",
+		"textureProj", "textureGrad", "textureGradOffset", "textureGather");
+	private static final List<String> SHADOW_EMULATION = List.of(
+		"""
+			float iris_shadowCompare(sampler2D s, vec3 p, ivec2 offset) {
+			    ivec2 size = textureSize(s, 0);
+			    vec2 t = p.xy * vec2(size) - 0.5 + vec2(offset);
+			    ivec2 i = ivec2(floor(t));
+			    vec2 f = t - floor(t);
+			    ivec2 m = size - 1;
+			    vec4 d = vec4(texelFetch(s, clamp(i, ivec2(0), m), 0).r, texelFetch(s, clamp(i + ivec2(1, 0), ivec2(0), m), 0).r,
+			        texelFetch(s, clamp(i + ivec2(0, 1), ivec2(0), m), 0).r, texelFetch(s, clamp(i + ivec2(1, 1), ivec2(0), m), 0).r);
+			    vec4 lit = vec4(greaterThanEqual(d, vec4(p.z)));
+			    return mix(mix(lit.x, lit.y, f.x), mix(lit.z, lit.w, f.x), f.y);
+			}""",
+		"float iris_shadow_texture(sampler2D s, vec3 p) { return iris_shadowCompare(s, p, ivec2(0)); }",
+		"float iris_shadow_texture(sampler2D s, vec3 p, float bias) { return iris_shadowCompare(s, p, ivec2(0)); }",
+		"float iris_shadow_textureLod(sampler2D s, vec3 p, float lod) { return iris_shadowCompare(s, p, ivec2(0)); }",
+		"float iris_shadow_textureOffset(sampler2D s, vec3 p, ivec2 o) { return iris_shadowCompare(s, p, o); }",
+		"float iris_shadow_textureOffset(sampler2D s, vec3 p, ivec2 o, float bias) { return iris_shadowCompare(s, p, o); }",
+		"float iris_shadow_textureLodOffset(sampler2D s, vec3 p, float lod, ivec2 o) { return iris_shadowCompare(s, p, o); }",
+		"float iris_shadow_textureProj(sampler2D s, vec4 p) { return iris_shadowCompare(s, p.xyz / p.w, ivec2(0)); }",
+		"float iris_shadow_textureProj(sampler2D s, vec4 p, float bias) { return iris_shadowCompare(s, p.xyz / p.w, ivec2(0)); }",
+		"float iris_shadow_textureGrad(sampler2D s, vec3 p, vec2 dx, vec2 dy) { return iris_shadowCompare(s, p, ivec2(0)); }",
+		"float iris_shadow_textureGradOffset(sampler2D s, vec3 p, vec2 dx, vec2 dy, ivec2 o) { return iris_shadowCompare(s, p, o); }",
+		"""
+			vec4 iris_shadow_textureGather(sampler2D s, vec2 p, float ref) {
+			    ivec2 size = textureSize(s, 0);
+			    ivec2 i = ivec2(floor(p * vec2(size) - 0.5));
+			    ivec2 m = size - 1;
+			    vec4 d = vec4(texelFetch(s, clamp(i + ivec2(0, 1), ivec2(0), m), 0).r, texelFetch(s, clamp(i + ivec2(1, 1), ivec2(0), m), 0).r,
+			        texelFetch(s, clamp(i + ivec2(1, 0), ivec2(0), m), 0).r, texelFetch(s, clamp(i, ivec2(0), m), 0).r);
+			    return vec4(greaterThanEqual(d, vec4(ref)));
+			}""");
+
+	/**
+	 * RenderPearl has no depth-compare samplers: sampler2DShadow becomes sampler2D and the comparing texture
+	 * calls on it become functions doing the compare (GL_LEQUAL, the shadow map holds forward depth) on the
+	 * four nearest texels, weighted like hardware PCF with linear filtering.
+	 */
+	private static void emulateShadowSamplers(ASTParser t, TranslationUnit tree, Root root) {
+		Set<String> globals = new HashSet<>();
+		Set<FunctionParameter> parameters = new HashSet<>();
+
+		for (BuiltinFixedTypeSpecifier specifier : root.nodeIndex.get(BuiltinFixedTypeSpecifier.class)) {
+			if (specifier.type != BuiltinFixedTypeSpecifier.BuiltinType.SAMPLER2DSHADOW) {
+				continue;
+			}
+
+			FunctionParameter parameter = specifier.getAncestor(FunctionParameter.class);
+
+			if (parameter != null) {
+				parameters.add(parameter);
+			} else if (specifier.getAncestor(TypeAndInitDeclaration.class) instanceof TypeAndInitDeclaration declaration) {
+				declaration.getMembers().forEach(member -> globals.add(member.getName().getName()));
+			}
+
+			specifier.type = BuiltinFixedTypeSpecifier.BuiltinType.SAMPLER2D;
+		}
+
+		if (globals.isEmpty() && parameters.isEmpty()) {
+			return;
+		}
+
+		List<FunctionCallExpression> calls = root.nodeIndex.getStream(FunctionCallExpression.class)
+			.filter(call -> call.getFunctionName() != null && SHADOW_FUNCTIONS.contains(call.getFunctionName().getName())
+				&& !call.getParameters().isEmpty() && isShadowSampler(call.getParameters().getFirst(), globals, parameters))
+			.toList();
+
+		for (FunctionCallExpression call : calls) {
+			call.getFunctionName().setName("iris_shadow_" + call.getFunctionName().getName());
+		}
+
+		// Each one goes in front of the first function definition, so iris_shadowCompare is injected last.
+		for (String function : SHADOW_EMULATION.reversed()) {
+			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_FUNCTIONS, function);
+		}
+	}
+
+	private static boolean isShadowSampler(Expression expression, Set<String> globals, Set<FunctionParameter> parameters) {
+		while (expression instanceof GroupingExpression grouping) {
+			expression = grouping.getOperand();
+		}
+
+		if (!(expression instanceof ReferenceExpression reference)) {
+			return false;
+		}
+
+		String name = reference.getIdentifier().getName();
+		FunctionDefinition function = expression.getAncestor(FunctionDefinition.class);
+
+		if (function != null) {
+			for (FunctionParameter parameter : function.getFunctionPrototype().getChildren()) {
+				if (parameter.getName() != null && parameter.getName().getName().equals(name)) {
+					return parameters.contains(parameter);
+				}
+			}
+		}
+
+		return globals.contains(name);
 	}
 
 	/** IrisStub + result kind (F/I/U) + dimension, or null for samplers RenderPearl can bind. */

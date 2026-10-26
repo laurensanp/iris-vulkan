@@ -6,7 +6,9 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.CompareOp;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.textures.FilterMode;
 import com.mojang.renderpearl.api.textures.GpuTexture;
@@ -15,6 +17,7 @@ import com.mojang.renderpearl.api.vertex.VertexFormat;
 import com.mojang.renderpearl.backend.opengl.GlProgram;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
+import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
 import net.irisshaders.iris.gl.blending.BufferBlendOverride;
 import net.irisshaders.iris.pipeline.IrisPipelines;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
@@ -69,8 +72,12 @@ public final class VulkanGbuffers {
 	private VulkanGbuffers() {
 	}
 
-	/** The colortex buffers and views a redirected render pass writes. */
-	public record Target(int[] buffers, List<GpuFormat> formats, List<Boolean> opaqueAlpha, boolean beforeTranslucent) {
+	/**
+	 * The colortex buffers and views a redirected render pass writes. {@code shadow}: shadowcolor buffers
+	 * and shadowtex0, which hold forward depth (the depth test of the original pipeline is reversed and
+	 * nothing is culled, like GL Iris does in the shadow pass).
+	 */
+	public record Target(int[] buffers, List<GpuFormat> formats, List<Boolean> opaqueAlpha, boolean beforeTranslucent, boolean shadow) {
 	}
 
 	/** {@code owned}: compiled here (pack programs), not by the game's pipeline cache, so closed here. */
@@ -78,7 +85,7 @@ public final class VulkanGbuffers {
 	}
 
 	private record VariantKey(RenderPipeline source, List<VertexFormat> vertexFormats, List<GpuFormat> formats,
-							  List<Boolean> opaqueAlpha, @Nullable GlProgram program) {
+							  List<Boolean> opaqueAlpha, @Nullable GlProgram program, boolean shadow) {
 	}
 
 	/** Called for every lookup in RenderSystem's pipeline cache, so a compiled pipeline can be rebuilt later. */
@@ -96,7 +103,7 @@ public final class VulkanGbuffers {
 		pending = null;
 
 		if (!IrisVulkan.isActive() || !(Iris.getPipelineManager().getPipelineNullable() instanceof IrisRenderingPipeline pipeline)
-			|| !pipeline.shouldOverrideShaders() || ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			|| !pipeline.shouldOverrideShaders()) {
 			return descriptor;
 		}
 
@@ -108,6 +115,10 @@ public final class VulkanGbuffers {
 
 		if (main == null || descriptor.colorAttachments().getFirst().textureView().texture() != main) {
 			return descriptor;
+		}
+
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return redirectShadow(descriptor, pipeline);
 		}
 
 		List<GpuTextureView> views = pipeline.getVulkanGbufferViews();
@@ -135,7 +146,36 @@ public final class VulkanGbuffers {
 		}
 
 		builder.withRenderArea(descriptor.renderArea());
-		pending = new Target(buffers, List.copyOf(formats), List.copyOf(opaqueAlpha), pipeline.isBeforeTranslucent);
+		pending = new Target(buffers, List.copyOf(formats), List.copyOf(opaqueAlpha), pipeline.isBeforeTranslucent, false);
+		return builder.build();
+	}
+
+	/**
+	 * The shadow pass draws the world into the main target too (ShadowRenderer); on GL Iris has the shadow
+	 * framebuffer bound instead. Here the pass gets the shadowcolor buffers shadow programs write and
+	 * shadowtex0 (cleared once per frame by the pipeline, not by the pass).
+	 */
+	private static RenderPassDescriptor redirectShadow(RenderPassDescriptor descriptor, IrisRenderingPipeline pipeline) {
+		GlFramebuffer framebuffer = pipeline.getVulkanShadowFramebuffer();
+		GpuTextureView depth = framebuffer == null ? null : framebuffer.vulkanDepthView();
+
+		if (depth == null) {
+			return descriptor;
+		}
+
+		RenderPassDescriptor.Builder builder = RenderPassDescriptor.builder(descriptor.label());
+		List<GpuFormat> formats = new ArrayList<>();
+		List<Boolean> opaqueAlpha = new ArrayList<>();
+
+		for (GpuTextureView view : framebuffer.vulkanColorViews()) {
+			opaqueAlpha.add(VulkanTextures.hasOpaqueAlpha(view.texture()));
+			builder.withColorAttachment(view, Optional.empty());
+			formats.add(view.texture().getFormat());
+		}
+
+		builder.withDepthAttachment(depth, OptionalDouble.empty());
+		builder.withRenderArea(new RenderPass.RenderArea(0, 0, depth.texture().getWidth(0), depth.texture().getHeight(0)));
+		pending = new Target(pipeline.getVulkanShadowBuffers(), List.copyOf(formats), List.copyOf(opaqueAlpha), true, true);
 		return builder.build();
 	}
 
@@ -174,7 +214,7 @@ public final class VulkanGbuffers {
 		boolean skip = ImmediateState.skipExtension.get();
 		// Unused vertex buffer slots are null.
 		List<VertexFormat> vertexFormats = Collections.unmodifiableList(new ArrayList<>(source.getVertexFormatBindings()));
-		VariantKey key = new VariantKey(source, vertexFormats, target.formats(), target.opaqueAlpha(), shader);
+		VariantKey key = new VariantKey(source, vertexFormats, target.formats(), target.opaqueAlpha(), shader, target.shadow());
 		CompiledRenderPipeline variant = VARIANT_CACHE.get(key);
 
 		if (variant == null) {
@@ -305,14 +345,17 @@ public final class VulkanGbuffers {
 			colorTargets.add(new ColorTargetState(bufferBlend, format, alphaMask(target, i, writeMask)));
 		}
 
-		return program.compileGbuffer(source, vertexFormats, colorTargets, outputLocations);
+		return program.compileGbuffer(source, vertexFormats, colorTargets, outputLocations, depthState(source, target), cull(source, target));
 	}
 
-	/** The original shaders, writing colortex0 (attachment 0) only; compiled through the game's pipeline cache. */
+	/**
+	 * The original shaders, writing colortex0 (attachment 0) only; compiled through the game's pipeline cache.
+	 * In the shadow pass they write depth only (GL Iris draws them with its fallback shadow program).
+	 */
 	private static CompiledRenderPipeline compileOriginal(RenderPipeline source, List<VertexFormat> vertexFormats, Target target) {
 		List<ColorTargetState> colorTargets = new ArrayList<>(target.formats().size());
 		ColorTargetState original = source.getColorTargetStates().isEmpty() ? ColorTargetState.DEFAULT : source.getColorTargetStates().getFirst();
-		int colortex0 = indexOf(target.buffers(), 0);
+		int colortex0 = target.shadow() ? -1 : indexOf(target.buffers(), 0);
 
 		for (int i = 0; i < target.formats().size(); i++) {
 			GpuFormat format = target.formats().get(i);
@@ -324,12 +367,12 @@ public final class VulkanGbuffers {
 			}
 		}
 
-		if (colortex0 != 0) {
+		if (colortex0 > 0 || (colortex0 < 0 && !target.shadow())) {
 			// The original fragment shader writes location 0 only.
 			VulkanUnsupported.once("vanilla draws in gbuffers when the pack doesn't write colortex0 first");
 		}
 
-		RenderPipeline variant = VulkanPipelines.copy(source, vertexFormats, colorTargets);
+		RenderPipeline variant = VulkanPipelines.copy(source, vertexFormats, colorTargets, depthState(source, target), cull(source, target));
 		CompiledRenderPipeline compiled = RenderSystem.getCompiledPipelineNullable(variant);
 
 		if (compiled == null) {
@@ -337,6 +380,35 @@ public final class VulkanGbuffers {
 		}
 
 		return compiled;
+	}
+
+	/**
+	 * The world is drawn with reverse-Z on Vulkan, the shadow map holds forward depth (cleared to 1, the
+	 * pack's shadow projection maps near to 0): in the shadow pass the comparison turns around, as GL Iris
+	 * does in MixinGlCommandEncoder / MixinGlRenderPipeline.
+	 */
+	@Nullable
+	private static DepthStencilState depthState(RenderPipeline source, Target target) {
+		DepthStencilState state = source.getDepthStencilState();
+
+		if (state == null || !target.shadow()) {
+			return state;
+		}
+
+		CompareOp reversed = switch (state.depthTest()) {
+			case LESS_THAN -> CompareOp.GREATER_THAN;
+			case LESS_THAN_OR_EQUAL -> CompareOp.GREATER_THAN_OR_EQUAL;
+			case GREATER_THAN_OR_EQUAL -> CompareOp.LESS_THAN_OR_EQUAL;
+			case GREATER_THAN -> CompareOp.LESS_THAN;
+			default -> state.depthTest();
+		};
+
+		return new DepthStencilState(reversed, state.writeDepth(), state.depthBiasScaleFactor(), state.depthBiasConstant());
+	}
+
+	/** No backface culling in the shadow pass (GL Iris: a mountain whose front faces the camera still casts a shadow). */
+	private static boolean cull(RenderPipeline source, Target target) {
+		return source.isCull() && !target.shadow();
 	}
 
 	/** No alpha writes into buffers whose GL format has no alpha (see VulkanTextures.keepOpaqueAlpha). */

@@ -16,6 +16,7 @@ import net.irisshaders.iris.gl.texture.InternalTextureFormat;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shaderpack.properties.PackShadowDirectives;
 import net.irisshaders.iris.targets.RenderTarget;
+import net.irisshaders.iris.vulkan.IrisVulkan;
 import org.lwjgl.opengl.GL30C;
 
 import java.util.ArrayList;
@@ -179,6 +180,12 @@ public class ShadowRenderTargets {
 	}
 
 	public void copyPreTranslucentDepth() {
+		if (IrisVulkan.isActive()) {
+			// shadowtex1: shadowtex0 before translucents (mip 0, like the GL blit).
+			RenderSystem.getDevice().createCommandEncoder().copyTextureToTexture(mainDepth, noTranslucents, 0, 0, 0, 0, 0, resolution, resolution);
+			return;
+		}
+
 		if (translucentDepthDirty) {
 			translucentDepthDirty = false;
 			IrisRenderSystem.blitFramebuffer(depthSourceFb.getId(), noTranslucentsDestFb.getId(), 0, 0, resolution, resolution,

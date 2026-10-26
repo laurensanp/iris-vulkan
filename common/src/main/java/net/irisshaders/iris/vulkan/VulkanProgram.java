@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
 import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.CompiledRenderPipeline;
+import com.mojang.renderpearl.api.pipeline.DepthStencilState;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.ShaderSource;
@@ -326,14 +327,15 @@ public final class VulkanProgram {
 	}
 
 	/**
-	 * A pipeline drawing this (gbuffers) program in place of {@code original}: same vertex layout, depth,
-	 * cull and topology, the given color targets. Output {@code i} of the fragment shader (DRAWBUFFERS
+	 * A pipeline drawing this (gbuffers or shadow) program in place of {@code original}: same vertex layout
+	 * and topology, the given color targets, depth state and culling. Output {@code i} of the fragment shader (DRAWBUFFERS
 	 * entry i) goes to color target {@code outputLocations[i]}. Vertex inputs are matched to the vertex
 	 * format like GL Iris binds them ("iris_" + element name, else the element name); inputs without an
 	 * element read zero.
 	 */
 	public CompiledRenderPipeline compileGbuffer(RenderPipeline original, List<VertexFormat> vertexFormats,
-												 List<ColorTargetState> colorTargets, int[] outputLocations) {
+												 List<ColorTargetState> colorTargets, int[] outputLocations,
+												 @Nullable DepthStencilState depthState, boolean cull) {
 		Set<String> matchedInputs = new HashSet<>();
 		// Inputs declared wider than their element (Solas: vec4 mc_midTexCoord from 2 components): GL fills
 		// in (0, 0, 1) for the rest, RenderPearl refuses the pipeline. They are read at the element's width.
@@ -410,9 +412,9 @@ public final class VulkanProgram {
 			.withVertexShader(variantLocation)
 			.withFragmentShader(variantLocation)
 			.withBindGroupLayout(bindings.build())
-			.withDepthStencilState(Optional.ofNullable(original.getDepthStencilState()))
+			.withDepthStencilState(Optional.ofNullable(depthState))
 			.withPolygonMode(original.getPolygonMode())
-			.withCull(original.isCull())
+			.withCull(cull)
 			.withPrimitiveTopology(original.getPrimitiveTopology())
 			.withPushConstantSize(original.pushConstantSize());
 
