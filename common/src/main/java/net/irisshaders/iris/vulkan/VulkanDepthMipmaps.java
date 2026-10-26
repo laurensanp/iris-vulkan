@@ -26,7 +26,8 @@ import java.util.OptionalDouble;
 
 /**
  * glGenerateMipmap for depth textures (shadowtex0Mipmap / shadowtex1Mipmap): each level is drawn from
- * the one above into a depth-only render pass, the fragment shader writing the averaged depth. The
+ * the one above into a depth-only render pass, the fragment shader writing the average of its 2x2
+ * texels (texelFetch: reading the depth view through a filtering sampler returned 0). The
  * level is cleared to 1 and the test passes everything at or below it (with ALWAYS the depth test, and
  * with it the write, may be off).
  */
@@ -49,7 +50,10 @@ public final class VulkanDepthMipmaps {
 		uniform sampler2D source;
 		layout(location = 0) in vec2 texcoord;
 		void main() {
-			gl_FragDepth = texture(source, texcoord).r;
+			ivec2 texel = ivec2(gl_FragCoord.xy) * 2;
+			ivec2 last = textureSize(source, 0) - 1;
+			gl_FragDepth = 0.25 * (texelFetch(source, min(texel, last), 0).r + texelFetch(source, min(texel + ivec2(1, 0), last), 0).r
+				+ texelFetch(source, min(texel + ivec2(0, 1), last), 0).r + texelFetch(source, min(texel + ivec2(1, 1), last), 0).r);
 		}
 		""";
 	@Nullable
