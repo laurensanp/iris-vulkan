@@ -1,5 +1,11 @@
 ![Iris: An open-source shaders mod compatible with OptiFine shader packs](docs/banner.png)
 
+> ## Archived (2026-10-27)
+>
+> No longer developed. For shader packs on Minecraft's Vulkan renderer together with DLSS use
+> [Vitrail](https://modrinth.com/mod/vitrail-shaders) and [iris-dlss](https://github.com/laurensanp/iris-dlss)
+> (its README lists everything needed). The text below describes the state at archiving.
+>
 > ## This is an unofficial fork: Iris on Vulkan
 >
 > This fork runs Iris shader packs on Minecraft 26.3's **Vulkan** renderer, so they work together with
